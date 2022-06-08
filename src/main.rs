@@ -1,7 +1,8 @@
 use bytes::{BufMut, BytesMut};
+use glam::{Mat4, Quat, Vec3};
 use gltf_json as json;
-use json::validation::Checked::Valid;
-use rose_file_readers::{RoseFile, VfsFile, ZmsFile};
+use json::{scene::UnitQuaternion, validation::Checked::Valid};
+use rose_file_readers::{RoseFile, VfsFile, ZmdFile, ZmsFile};
 use std::{borrow::Cow, collections::HashMap, path::PathBuf};
 
 fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms: &ZmsFile) -> u32 {
@@ -258,7 +259,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
             Valid(json::mesh::Semantic::Joints(0)),
             json::Index::new(accessor_index),
         );
-        vertex_data_stride += 2 * 2;
+        vertex_data_stride += 4 * 2;
     }
 
     let vertex_data_start = binary_data.len() as u32;
@@ -318,6 +319,8 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
         if !zms.bone_indices.is_empty() {
             binary_data.put_u16_le(zms.bone_indices[i][0]);
             binary_data.put_u16_le(zms.bone_indices[i][1]);
+            binary_data.put_u16_le(zms.bone_indices[i][2]);
+            binary_data.put_u16_le(zms.bone_indices[i][3]);
         }
     }
     let vertex_data_length = binary_data.len() as u32 - vertex_data_start;
@@ -381,7 +384,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
 
     let mesh_index = root.meshes.len() as u32;
     root.meshes.push(json::Mesh {
-        name: Some(format!("{}_Mesh", name)),
+        name: Some(name.into()),
         extensions: Default::default(),
         extras: Default::default(),
         primitives: vec![primitive],
@@ -389,6 +392,137 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
     });
 
     mesh_index
+}
+
+fn transform_children(skeleton: &ZmdFile, bone_transforms: &mut Vec<Mat4>, bone_index: usize) {
+    for (child_id, child_bone) in skeleton.bones.iter().enumerate() {
+        if child_id == bone_index || child_bone.parent as usize != bone_index {
+            continue;
+        }
+
+        bone_transforms[child_id] = bone_transforms[bone_index] * bone_transforms[child_id];
+        transform_children(skeleton, bone_transforms, child_id);
+    }
+}
+
+fn load_skeleton(
+    root: &mut json::Root,
+    binary_data: &mut BytesMut,
+    name: &str,
+    zmd: &ZmdFile,
+) -> json::Index<json::Skin> {
+    let bone_node_index_start = root.nodes.len();
+    let mut joints = Vec::new();
+    let mut bind_pose = Vec::new();
+
+    // Create nodes for each bone
+    for i in 0..zmd.bones.len() {
+        let bone = &zmd.bones[i];
+        root.nodes.push(json::Node {
+            name: Some(format!("{}_Bone_{}", name, i)),
+            camera: None,
+            children: None,
+            extensions: Default::default(),
+            extras: Default::default(),
+            matrix: None,
+            mesh: None,
+            rotation: Some(UnitQuaternion([
+                bone.rotation.x,
+                bone.rotation.z,
+                -bone.rotation.y,
+                bone.rotation.w,
+            ])),
+            scale: None,
+            translation: Some([
+                bone.position.x / 100.0,
+                bone.position.z / 100.0,
+                -bone.position.y / 100.0,
+            ]),
+            skin: None,
+            weights: None,
+        });
+        joints.push(json::Index::new(bone_node_index_start as u32 + i as u32));
+
+        let translation = Vec3::new(bone.position.x, bone.position.z, -bone.position.y) / 100.0;
+        let rotation = Quat::from_xyzw(
+            bone.rotation.x,
+            bone.rotation.z,
+            -bone.rotation.y,
+            bone.rotation.w,
+        );
+        bind_pose.push(glam::Mat4::from_rotation_translation(rotation, translation));
+    }
+
+    // Assign parents
+    for i in 0..zmd.bones.len() {
+        let parent_bone_index = zmd.bones[i].parent as usize;
+        if parent_bone_index == i {
+            continue;
+        }
+
+        let parent = &mut root.nodes[bone_node_index_start + parent_bone_index];
+        if let Some(children) = parent.children.as_mut() {
+            children.push(json::Index::new(bone_node_index_start as u32 + i as u32));
+        } else {
+            parent.children = Some(vec![json::Index::new(
+                bone_node_index_start as u32 + i as u32,
+            )]);
+        }
+    }
+
+    // Calculate inverse bind pose
+    transform_children(zmd, &mut bind_pose, 0);
+    let inverse_bind_pose: Vec<Mat4> = bind_pose.iter().map(|x| x.inverse()).collect();
+
+    let skeleton_data_start = binary_data.len() as u32;
+    for mtx in inverse_bind_pose.iter() {
+        for f in mtx.to_cols_array() {
+            binary_data.put_f32_le(f);
+        }
+    }
+    let skeleton_data_length = binary_data.len() as u32 - skeleton_data_start;
+    let skeleton_data_stride = 4 * 16;
+
+    let buffer_view_index = root.buffer_views.len() as u32;
+    root.buffer_views.push(json::buffer::View {
+        name: Some(format!("{}_SkeletonBufferView", name)),
+        buffer: json::Index::new(0),
+        byte_length: skeleton_data_length as u32,
+        byte_offset: Some(skeleton_data_start),
+        byte_stride: Some(skeleton_data_stride),
+        extensions: Default::default(),
+        extras: Default::default(),
+        target: Some(Valid(json::buffer::Target::ArrayBuffer)),
+    });
+
+    let accessor_index = root.accessors.len() as u32;
+    root.accessors.push(json::Accessor {
+        name: Some(format!("{}_SkeletonAccessor", name)),
+        buffer_view: Some(json::Index::new(buffer_view_index)),
+        byte_offset: 0,
+        count: inverse_bind_pose.len() as u32,
+        component_type: Valid(json::accessor::GenericComponentType(
+            json::accessor::ComponentType::F32,
+        )),
+        extensions: Default::default(),
+        extras: Default::default(),
+        type_: Valid(json::accessor::Type::Mat4),
+        min: None,
+        max: None,
+        normalized: false,
+        sparse: None,
+    });
+
+    let skin_index = root.skins.len() as u32;
+    root.skins.push(json::Skin {
+        name: Some(name.to_string()),
+        extensions: Default::default(),
+        extras: Default::default(),
+        inverse_bind_matrices: Some(json::Index::new(accessor_index)),
+        skeleton: Some(joints[0]),
+        joints,
+    });
+    json::Index::new(skin_index)
 }
 
 fn main() {
@@ -419,6 +553,7 @@ fn main() {
         extras: Default::default(),
         nodes: Default::default(),
     };
+    let mut skin_index = None;
 
     for input_file in input_files {
         let file_path = PathBuf::from(input_file);
@@ -433,6 +568,15 @@ fn main() {
             .to_string();
 
         match file_extension.as_str() {
+            "zmd" => {
+                let zmd = <ZmdFile as RoseFile>::read(
+                    (&VfsFile::Buffer(file_data)).into(),
+                    &Default::default(),
+                )
+                .expect("Failed to parse ZMD");
+
+                skin_index = Some(load_skeleton(&mut root, &mut binary_data, &file_name, &zmd));
+            }
             "zms" => {
                 let zms = <ZmsFile as RoseFile>::read(
                     (&VfsFile::Buffer(file_data)).into(),
@@ -443,7 +587,7 @@ fn main() {
                 let mesh_index = load_mesh(&mut root, &mut binary_data, &file_name, &zms);
                 let node_index = root.nodes.len() as u32;
                 root.nodes.push(json::Node {
-                    name: Some(file_name),
+                    name: Some(format!("{}_Node", file_name)),
                     camera: None,
                     children: None,
                     extensions: Default::default(),
@@ -453,7 +597,11 @@ fn main() {
                     rotation: None,
                     scale: None,
                     translation: None,
-                    skin: None,
+                    skin: if zms.bone_indices.is_empty() {
+                        None
+                    } else {
+                        skin_index
+                    },
                     weights: None,
                 });
                 scene.nodes.push(json::Index::new(node_index));
