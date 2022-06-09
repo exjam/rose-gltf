@@ -1,9 +1,13 @@
 use bytes::{BufMut, BytesMut};
 use glam::{Mat4, Quat, Vec3};
+use gltf::animation::Interpolation;
 use gltf_json as json;
 use json::{scene::UnitQuaternion, validation::Checked::Valid};
 use roselib::{
-    files::{ZMD, ZMS},
+    files::{
+        zmo::{ChannelData, ChannelType},
+        ZMD, ZMO, ZMS,
+    },
     io::RoseFile,
 };
 use std::{borrow::Cow, collections::HashMap, path::PathBuf};
@@ -526,6 +530,166 @@ fn load_skeleton(
     json::Index::new(skin_index)
 }
 
+fn load_skeletal_animation(
+    root: &mut json::Root,
+    binary_data: &mut BytesMut,
+    name: &str,
+    skin_index: json::Index<json::Skin>,
+    zmo: &ZMO,
+) {
+    let mut channels = Vec::new();
+    let mut samplers = Vec::new();
+
+    let keyframe_time_start = binary_data.len() as u32;
+    let fps = zmo.fps as f32;
+    for i in 0..zmo.frames {
+        binary_data.put_f32_le(i as f32 / fps)
+    }
+    let keyframe_time_length = binary_data.len() as u32 - keyframe_time_start;
+    let keyframe_time_stride = 4;
+
+    let buffer_view_index = root.buffer_views.len() as u32;
+    root.buffer_views.push(json::buffer::View {
+        name: Some(format!("{}_KeyframeTimesBuferView", name)),
+        buffer: json::Index::new(0),
+        byte_length: keyframe_time_length as u32,
+        byte_offset: Some(keyframe_time_start),
+        byte_stride: Some(keyframe_time_stride),
+        extensions: Default::default(),
+        extras: Default::default(),
+        target: Some(Valid(json::buffer::Target::ArrayBuffer)),
+    });
+
+    let keyframe_time_accessor_index = json::Index::new(root.accessors.len() as u32);
+    root.accessors.push(json::Accessor {
+        name: Some(format!("{}_KeyframeTimesAccessor", name)),
+        buffer_view: Some(json::Index::new(buffer_view_index)),
+        byte_offset: 0,
+        count: zmo.frames,
+        component_type: Valid(json::accessor::GenericComponentType(
+            json::accessor::ComponentType::F32,
+        )),
+        extensions: Default::default(),
+        extras: Default::default(),
+        type_: Valid(json::accessor::Type::Scalar),
+        min: None,
+        max: None,
+        normalized: false,
+        sparse: None,
+    });
+
+    for (channel_id, channel) in zmo.channels.iter().enumerate() {
+        if !matches!(
+            channel.typ,
+            ChannelType::Position | ChannelType::Rotation | ChannelType::Scale
+        ) {
+            continue;
+        }
+
+        let keyframe_data_start = binary_data.len() as u32;
+        let keyframe_data_stride = match &channel.frames {
+            ChannelData::Position(positions) => {
+                for position in positions.iter() {
+                    binary_data.put_f32_le(position.x / 100.0);
+                    binary_data.put_f32_le(position.z / 100.0);
+                    binary_data.put_f32_le(-position.y / 100.0);
+                }
+
+                4 * 3
+            }
+            ChannelData::Rotation(rotations) => {
+                for rotation in rotations.iter() {
+                    binary_data.put_f32_le(rotation.x);
+                    binary_data.put_f32_le(rotation.z);
+                    binary_data.put_f32_le(-rotation.y);
+                    binary_data.put_f32_le(rotation.w);
+                }
+
+                4 * 4
+            }
+            ChannelData::Scale(scales) => {
+                for scale in scales.iter() {
+                    binary_data.put_f32_le(*scale);
+                    binary_data.put_f32_le(*scale);
+                    binary_data.put_f32_le(*scale);
+                }
+
+                4 * 3
+            }
+            _ => unreachable!(),
+        };
+        let keyframe_data_length = binary_data.len() as u32 - keyframe_data_start;
+
+        let buffer_view_index = root.buffer_views.len() as u32;
+        root.buffer_views.push(json::buffer::View {
+            name: Some(format!("{}_Channel{}_DataBufferView", name, channel_id)),
+            buffer: json::Index::new(0),
+            byte_length: keyframe_data_length as u32,
+            byte_offset: Some(keyframe_data_start),
+            byte_stride: Some(keyframe_data_stride),
+            extensions: Default::default(),
+            extras: Default::default(),
+            target: Some(Valid(json::buffer::Target::ArrayBuffer)),
+        });
+
+        let keyframe_data_accessor_index = json::Index::new(root.accessors.len() as u32);
+        root.accessors.push(json::Accessor {
+            name: Some(format!("{}_Channel{}_DataAccessor", name, channel_id)),
+            buffer_view: Some(json::Index::new(buffer_view_index)),
+            byte_offset: 0,
+            count: zmo.frames,
+            component_type: Valid(json::accessor::GenericComponentType(
+                json::accessor::ComponentType::F32,
+            )),
+            extensions: Default::default(),
+            extras: Default::default(),
+            type_: Valid(if matches!(channel.typ, ChannelType::Rotation) {
+                json::accessor::Type::Vec4
+            } else {
+                json::accessor::Type::Vec3
+            }),
+            min: None,
+            max: None,
+            normalized: false,
+            sparse: None,
+        });
+
+        let sampler_index = json::Index::new(samplers.len() as u32);
+        samplers.push(json::animation::Sampler {
+            input: keyframe_time_accessor_index,
+            interpolation: Valid(Interpolation::Linear),
+            output: keyframe_data_accessor_index,
+            extensions: Default::default(),
+            extras: Default::default(),
+        });
+
+        channels.push(json::animation::Channel {
+            sampler: sampler_index,
+            target: json::animation::Target {
+                node: root.get(skin_index).unwrap().joints[channel.index as usize],
+                path: Valid(match channel.typ {
+                    ChannelType::Position => json::animation::Property::Translation,
+                    ChannelType::Rotation => json::animation::Property::Rotation,
+                    ChannelType::Scale => json::animation::Property::Scale,
+                    _ => unreachable!(),
+                }),
+                extensions: Default::default(),
+                extras: Default::default(),
+            },
+            extensions: Default::default(),
+            extras: Default::default(),
+        });
+    }
+
+    root.animations.push(json::Animation {
+        extensions: Default::default(),
+        extras: Default::default(),
+        channels,
+        name: Some(name.to_string()),
+        samplers,
+    });
+}
+
 fn main() {
     let matches = clap::Command::new("rose-gltf")
         .arg(
@@ -572,6 +736,19 @@ fn main() {
                 let zmd = ZMD::from_path(&file_path).expect("Failed to load ZMD");
 
                 skin_index = Some(load_skeleton(&mut root, &mut binary_data, &file_name, &zmd));
+            }
+            "zmo" => {
+                let zmo = ZMO::from_path(&file_path).expect("Failed to load ZMO");
+
+                if let Some(skin_index) = skin_index {
+                    load_skeletal_animation(
+                        &mut root,
+                        &mut binary_data,
+                        &file_name,
+                        skin_index,
+                        &zmo,
+                    );
+                }
             }
             "zms" => {
                 let zms = ZMS::from_path(&file_path).expect("Failed to load ZMS");
