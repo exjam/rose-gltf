@@ -2,17 +2,20 @@ use bytes::{BufMut, BytesMut};
 use glam::{Mat4, Quat, Vec3};
 use gltf_json as json;
 use json::{scene::UnitQuaternion, validation::Checked::Valid};
-use rose_file_readers::{RoseFile, VfsFile, ZmdFile, ZmsFile};
+use roselib::{
+    files::{ZMD, ZMS},
+    io::RoseFile,
+};
 use std::{borrow::Cow, collections::HashMap, path::PathBuf};
 
-fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms: &ZmsFile) -> u32 {
+fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms: &ZMS) -> u32 {
     let mut attributes_map = HashMap::new();
     let mut vertex_data_stride = 0;
-    let vertex_count = zms.position.len();
+    let vertex_count = zms.vertices.len();
     let vertex_data_buffer_view_index = root.buffer_views.len() as u32;
     let index_data_buffer_view_index = vertex_data_buffer_view_index + 1;
 
-    if !zms.position.is_empty() {
+    if zms.positions_enabled() {
         let accessor_index = root.accessors.len() as u32;
         root.accessors.push(json::Accessor {
             name: Some(format!("{}_Position", name)),
@@ -37,7 +40,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
         vertex_data_stride += 4 * 3;
     }
 
-    if !zms.normal.is_empty() {
+    if zms.normals_enabled() {
         let accessor_index = root.accessors.len() as u32;
         root.accessors.push(json::Accessor {
             name: Some(format!("{}_Normal", name)),
@@ -62,7 +65,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
         vertex_data_stride += 4 * 3;
     }
 
-    if !zms.tangent.is_empty() {
+    if zms.tangents_enabled() {
         let accessor_index = root.accessors.len() as u32;
         root.accessors.push(json::Accessor {
             name: Some(format!("{}_Tangent", name)),
@@ -87,7 +90,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
         vertex_data_stride += 4 * 3;
     }
 
-    if !zms.color.is_empty() {
+    if zms.colors_enabled() {
         let accessor_index = root.accessors.len() as u32;
         root.accessors.push(json::Accessor {
             name: Some(format!("{}_Color", name)),
@@ -112,7 +115,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
         vertex_data_stride += 4 * 4;
     }
 
-    if !zms.uv1.is_empty() {
+    if zms.uv1_enabled() {
         let accessor_index = root.accessors.len() as u32;
         root.accessors.push(json::Accessor {
             name: Some(format!("{}_UV1", name)),
@@ -137,7 +140,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
         vertex_data_stride += 4 * 2;
     }
 
-    if !zms.uv2.is_empty() {
+    if zms.uv2_enabled() {
         let accessor_index = root.accessors.len() as u32;
         root.accessors.push(json::Accessor {
             name: Some(format!("{}_UV2", name)),
@@ -162,7 +165,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
         vertex_data_stride += 4 * 2;
     }
 
-    if !zms.uv3.is_empty() {
+    if zms.uv3_enabled() {
         let accessor_index = root.accessors.len() as u32;
         root.accessors.push(json::Accessor {
             name: Some(format!("{}_UV3", name)),
@@ -187,7 +190,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
         vertex_data_stride += 4 * 2;
     }
 
-    if !zms.uv4.is_empty() {
+    if zms.uv4_enabled() {
         let accessor_index = root.accessors.len() as u32;
         root.accessors.push(json::Accessor {
             name: Some(format!("{}_UV4", name)),
@@ -212,7 +215,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
         vertex_data_stride += 4 * 2;
     }
 
-    if !zms.bone_weights.is_empty() {
+    if zms.bones_enabled() {
         let accessor_index = root.accessors.len() as u32;
         root.accessors.push(json::Accessor {
             name: Some(format!("{}_BoneWeights", name)),
@@ -235,9 +238,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
             json::Index::new(accessor_index),
         );
         vertex_data_stride += 4 * 4;
-    }
 
-    if !zms.bone_indices.is_empty() {
         let accessor_index = root.accessors.len() as u32;
         root.accessors.push(json::Accessor {
             name: Some(format!("{}_BoneIndices", name)),
@@ -263,72 +264,72 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
     }
 
     let vertex_data_start = binary_data.len() as u32;
-    for i in 0..zms.position.len() {
-        if !zms.position.is_empty() {
-            binary_data.put_f32_le(zms.position[i][0]);
-            binary_data.put_f32_le(zms.position[i][2]);
-            binary_data.put_f32_le(-zms.position[i][1]);
+    for vertex in zms.vertices.iter() {
+        if zms.positions_enabled() {
+            binary_data.put_f32_le(vertex.position.x);
+            binary_data.put_f32_le(vertex.position.z);
+            binary_data.put_f32_le(-vertex.position.y);
         }
 
-        if !zms.normal.is_empty() {
-            binary_data.put_f32_le(zms.normal[i][0]);
-            binary_data.put_f32_le(zms.normal[i][2]);
-            binary_data.put_f32_le(-zms.normal[i][1]);
+        if zms.normals_enabled() {
+            binary_data.put_f32_le(vertex.normal.x);
+            binary_data.put_f32_le(vertex.normal.z);
+            binary_data.put_f32_le(-vertex.normal.y);
         }
 
-        if !zms.tangent.is_empty() {
-            binary_data.put_f32_le(zms.tangent[i][0]);
-            binary_data.put_f32_le(zms.tangent[i][2]);
-            binary_data.put_f32_le(-zms.tangent[i][1]);
+        if zms.tangents_enabled() {
+            binary_data.put_f32_le(vertex.tangent.x);
+            binary_data.put_f32_le(vertex.tangent.z);
+            binary_data.put_f32_le(-vertex.tangent.y);
         }
 
-        if !zms.color.is_empty() {
-            binary_data.put_f32_le(zms.color[i][0]);
-            binary_data.put_f32_le(zms.color[i][1]);
-            binary_data.put_f32_le(zms.color[i][2]);
-            binary_data.put_f32_le(zms.color[i][3]);
+        if zms.colors_enabled() {
+            binary_data.put_f32_le(vertex.color.r);
+            binary_data.put_f32_le(vertex.color.g);
+            binary_data.put_f32_le(vertex.color.b);
+            binary_data.put_f32_le(vertex.color.a);
         }
 
-        if !zms.uv1.is_empty() {
-            binary_data.put_f32_le(zms.uv1[i][0]);
-            binary_data.put_f32_le(zms.uv1[i][1]);
+        if zms.uv1_enabled() {
+            binary_data.put_f32_le(vertex.uv1.x);
+            binary_data.put_f32_le(vertex.uv1.y);
         }
 
-        if !zms.uv2.is_empty() {
-            binary_data.put_f32_le(zms.uv2[i][0]);
-            binary_data.put_f32_le(zms.uv2[i][1]);
+        if zms.uv2_enabled() {
+            binary_data.put_f32_le(vertex.uv2.x);
+            binary_data.put_f32_le(vertex.uv2.y);
         }
 
-        if !zms.uv3.is_empty() {
-            binary_data.put_f32_le(zms.uv3[i][0]);
-            binary_data.put_f32_le(zms.uv3[i][1]);
+        if zms.uv3_enabled() {
+            binary_data.put_f32_le(vertex.uv3.x);
+            binary_data.put_f32_le(vertex.uv3.y);
         }
 
-        if !zms.uv4.is_empty() {
-            binary_data.put_f32_le(zms.uv4[i][0]);
-            binary_data.put_f32_le(zms.uv4[i][1]);
+        if zms.uv4_enabled() {
+            binary_data.put_f32_le(vertex.uv4.x);
+            binary_data.put_f32_le(vertex.uv4.y);
         }
 
-        if !zms.bone_weights.is_empty() {
-            binary_data.put_f32_le(zms.bone_weights[i][0]);
-            binary_data.put_f32_le(zms.bone_weights[i][1]);
-            binary_data.put_f32_le(zms.bone_weights[i][2]);
-            binary_data.put_f32_le(zms.bone_weights[i][3]);
-        }
+        if zms.bones_enabled() {
+            binary_data.put_f32_le(vertex.bone_weights.x);
+            binary_data.put_f32_le(vertex.bone_weights.y);
+            binary_data.put_f32_le(vertex.bone_weights.z);
+            binary_data.put_f32_le(vertex.bone_weights.w);
 
-        if !zms.bone_indices.is_empty() {
-            binary_data.put_u16_le(zms.bone_indices[i][0]);
-            binary_data.put_u16_le(zms.bone_indices[i][1]);
-            binary_data.put_u16_le(zms.bone_indices[i][2]);
-            binary_data.put_u16_le(zms.bone_indices[i][3]);
+            binary_data.put_i16_le(zms.bones[vertex.bone_indices.x as usize]);
+            binary_data.put_i16_le(zms.bones[vertex.bone_indices.y as usize]);
+            binary_data.put_i16_le(zms.bones[vertex.bone_indices.z as usize]);
+            binary_data.put_i16_le(zms.bones[vertex.bone_indices.w as usize]);
         }
     }
     let vertex_data_length = binary_data.len() as u32 - vertex_data_start;
 
     let index_data_start = binary_data.len() as u32;
     let index_data_stride = 2;
-    for i in 0..zms.indices.len() {
-        binary_data.put_u16_le(zms.indices[i]);
+    for triangle in zms.indices.iter() {
+        binary_data.put_i16_le(triangle.x);
+        binary_data.put_i16_le(triangle.y);
+        binary_data.put_i16_le(triangle.z);
     }
     let index_data_length = binary_data.len() as u32 - index_data_start;
 
@@ -359,7 +360,7 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
         name: Some(format!("{}_Indices", name)),
         buffer_view: Some(json::Index::new(index_data_buffer_view_index)),
         byte_offset: 0,
-        count: zms.indices.len() as u32,
+        count: (3 * zms.indices.len()) as u32,
         component_type: Valid(json::accessor::GenericComponentType(
             json::accessor::ComponentType::U16,
         )),
@@ -394,14 +395,14 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
     mesh_index
 }
 
-fn transform_children(skeleton: &ZmdFile, bone_transforms: &mut Vec<Mat4>, bone_index: usize) {
-    for (child_id, child_bone) in skeleton.bones.iter().enumerate() {
+fn transform_children(zmd: &ZMD, bone_transforms: &mut Vec<Mat4>, bone_index: usize) {
+    for (child_id, child_bone) in zmd.bones.iter().enumerate() {
         if child_id == bone_index || child_bone.parent as usize != bone_index {
             continue;
         }
 
         bone_transforms[child_id] = bone_transforms[bone_index] * bone_transforms[child_id];
-        transform_children(skeleton, bone_transforms, child_id);
+        transform_children(zmd, bone_transforms, child_id);
     }
 }
 
@@ -409,7 +410,7 @@ fn load_skeleton(
     root: &mut json::Root,
     binary_data: &mut BytesMut,
     name: &str,
-    zmd: &ZmdFile,
+    zmd: &ZMD,
 ) -> json::Index<json::Skin> {
     let bone_node_index_start = root.nodes.len();
     let mut joints = Vec::new();
@@ -557,7 +558,6 @@ fn main() {
 
     for input_file in input_files {
         let file_path = PathBuf::from(input_file);
-        let file_data = std::fs::read(&file_path).expect("Failed to read input file");
         let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
         let file_extension = file_path
             .extension()
@@ -569,20 +569,12 @@ fn main() {
 
         match file_extension.as_str() {
             "zmd" => {
-                let zmd = <ZmdFile as RoseFile>::read(
-                    (&VfsFile::Buffer(file_data)).into(),
-                    &Default::default(),
-                )
-                .expect("Failed to parse ZMD");
+                let zmd = ZMD::from_path(&file_path).expect("Failed to load ZMD");
 
                 skin_index = Some(load_skeleton(&mut root, &mut binary_data, &file_name, &zmd));
             }
             "zms" => {
-                let zms = <ZmsFile as RoseFile>::read(
-                    (&VfsFile::Buffer(file_data)).into(),
-                    &Default::default(),
-                )
-                .expect("Failed to parse ZMS");
+                let zms = ZMS::from_path(&file_path).expect("Failed to load ZMS");
 
                 let mesh_index = load_mesh(&mut root, &mut binary_data, &file_name, &zms);
                 let node_index = root.nodes.len() as u32;
@@ -597,10 +589,10 @@ fn main() {
                     rotation: None,
                     scale: None,
                     translation: None,
-                    skin: if zms.bone_indices.is_empty() {
-                        None
-                    } else {
+                    skin: if zms.bones_enabled() {
                         skin_index
+                    } else {
+                        None
                     },
                     weights: None,
                 });

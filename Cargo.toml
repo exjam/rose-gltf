@@ -1,12 +1,6 @@
-[package]
-name = "rose-gltf"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+members = [
+    "rose-gltf",
+    "gltf-rose",
+]
 
-[dependencies]
-bytes = "1.1"
-clap = "3.1"
-glam = "0.20.5"
-gltf = "1.0.0"
-gltf-json = "1.0.0"
-rose-file-readers = { git = "https://github.com/exjam/rose-offline", rev = "53810dac9ae623825d7ef3420f159dd4530e218e" }
