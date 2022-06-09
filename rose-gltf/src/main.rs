@@ -10,6 +10,7 @@ use roselib::{
     },
     io::RoseFile,
 };
+use serde_json::json;
 use std::{borrow::Cow, collections::HashMap, path::PathBuf};
 
 fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms: &ZMS) -> u32 {
@@ -20,6 +21,18 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
     let index_data_buffer_view_index = vertex_data_buffer_view_index + 1;
 
     if zms.positions_enabled() {
+        let mut min_pos = zms.vertices[0].position;
+        let mut max_pos = zms.vertices[0].position;
+        for vertex in zms.vertices.iter() {
+            min_pos.x = min_pos.x.min(vertex.position.x);
+            min_pos.y = min_pos.y.min(vertex.position.y);
+            min_pos.z = min_pos.z.min(vertex.position.z);
+
+            max_pos.x = max_pos.x.max(vertex.position.x);
+            max_pos.y = max_pos.y.max(vertex.position.y);
+            max_pos.z = max_pos.z.max(vertex.position.z);
+        }
+
         let accessor_index = root.accessors.len() as u32;
         root.accessors.push(json::Accessor {
             name: Some(format!("{}_Position", name)),
@@ -32,8 +45,8 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
             extensions: Default::default(),
             extras: Default::default(),
             type_: Valid(json::accessor::Type::Vec3),
-            min: None,
-            max: None,
+            min: Some(json!(vec![min_pos.x, min_pos.y, min_pos.z])),
+            max: Some(json!(vec![max_pos.x, max_pos.y, max_pos.z])),
             normalized: false,
             sparse: None,
         });

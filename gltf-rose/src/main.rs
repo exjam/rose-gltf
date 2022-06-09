@@ -1,10 +1,16 @@
 use std::path::PathBuf;
 
-use gltf::mesh::util::{ReadColors, ReadIndices, ReadJoints, ReadTexCoords, ReadWeights};
+use gltf::{
+    animation::{
+        util::{ReadOutputs, Rotations},
+        Interpolation,
+    },
+    mesh::util::{ReadColors, ReadIndices, ReadJoints, ReadTexCoords, ReadWeights},
+};
 use roselib::{
     files::{
         zms::{Vertex, VertexFormat},
-        ZMS,
+        ZMO, ZMS,
     },
     io::RoseFile,
     utils::Vector3,
@@ -13,6 +19,11 @@ use roselib::{
 fn main() {
     let matches = clap::Command::new("rose-gltf")
         .arg(clap::Arg::new("input-file").takes_value(true))
+        .arg(
+            clap::Arg::new("zmo-fps")
+                .takes_value(true)
+                .default_value("30"),
+        )
         .get_matches();
 
     let input_file = PathBuf::from(
@@ -20,6 +31,10 @@ fn main() {
             .value_of("input-file")
             .expect("No input file specified"),
     );
+    let animation_fps = matches
+        .value_of("zmo-fps")
+        .and_then(|x| x.parse::<u32>().ok())
+        .unwrap_or(30);
 
     let (document, buffers, _images) = gltf::import(&input_file).expect("Failed to read GLTF file");
 
@@ -337,6 +352,198 @@ fn main() {
                 .unwrap_or(format!("mesh_{}.zms", mesh_index)),
         );
         zms.write_to_path(&out_path)
+            .expect("Failed to write output file");
+    }
+
+    for (animation_index, animation) in document.animations().enumerate() {
+        let mut zmo = ZMO::new();
+        let mut max_keyframe_time = 0.0f32;
+
+        for channel in animation.channels() {
+            let reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
+            for t in reader.read_inputs().unwrap() {
+                max_keyframe_time = max_keyframe_time.max(t);
+            }
+        }
+
+        let num_frames = (max_keyframe_time * animation_fps as f32).ceil() as u32;
+        zmo.identifier = "ZMO0002".into();
+        zmo.fps = animation_fps;
+        zmo.frames = num_frames;
+
+        for channel in animation.channels() {
+            let reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
+            let outputs = reader.read_outputs().unwrap();
+            let inputs = reader.read_inputs().unwrap();
+            let interpolation = channel.sampler().interpolation();
+            let target_node = channel.target().node();
+            let target_bone_index = document
+                .skins()
+                .find_map(|skin| {
+                    skin.joints()
+                        .enumerate()
+                        .find(|(_, joint_node)| target_node.index() == joint_node.index())
+                        .map(|(joint_index, _)| joint_index as u32)
+                })
+                .expect("Could not find skeleton bone index for animation channel");
+
+            match outputs {
+                ReadOutputs::Translations(translations) => {
+                    let keyframes: Vec<_> =
+                        inputs.zip(translations.map(glam::Vec3::from)).collect();
+                    let mut rasterized_frames = Vec::with_capacity(num_frames as usize);
+
+                    for frame_index in 0..num_frames {
+                        let frame_time = frame_index as f32 / animation_fps as f32;
+
+                        let keyframe_before = keyframes
+                            .iter()
+                            .rfind(|(t, _)| *t <= frame_time)
+                            .unwrap_or_else(|| keyframes.first().unwrap());
+                        let keyframe_after = keyframes
+                            .iter()
+                            .find(|(t, _)| *t >= frame_time)
+                            .unwrap_or_else(|| keyframes.last().unwrap());
+
+                        let value = match interpolation {
+                            Interpolation::Linear => {
+                                if keyframe_before == keyframe_after {
+                                    keyframe_before.1
+                                } else {
+                                    let lerp_factor = (frame_time - keyframe_before.0)
+                                        / (keyframe_after.0 - keyframe_before.0);
+                                    keyframe_before.1.lerp(keyframe_after.1, lerp_factor)
+                                }
+                            }
+                            Interpolation::Step => keyframe_before.1,
+                            Interpolation::CubicSpline => todo!(),
+                        } * 100.0;
+
+                        rasterized_frames.push(Vector3 {
+                            x: value.x,
+                            y: -value.z,
+                            z: value.y,
+                        });
+                    }
+
+                    zmo.channels.push(roselib::files::zmo::Channel {
+                        typ: roselib::files::zmo::ChannelType::Position,
+                        index: target_bone_index,
+                        frames: roselib::files::zmo::ChannelData::Position(rasterized_frames),
+                    });
+                }
+                ReadOutputs::Rotations(rotations) => {
+                    let rotations_f32: Vec<glam::Quat> = match rotations {
+                        Rotations::I8(rotations_snorm) => rotations_snorm
+                            .map(|x| x.map(|y| y as f32 / 127.0))
+                            .map(glam::Quat::from_array)
+                            .collect(),
+                        Rotations::U8(rotations_unorm) => rotations_unorm
+                            .map(|x| x.map(|y| y as f32 / 255.0))
+                            .map(glam::Quat::from_array)
+                            .collect(),
+                        Rotations::I16(rotations_snorm) => rotations_snorm
+                            .map(|x| x.map(|y| y as f32 / 32767.0))
+                            .map(glam::Quat::from_array)
+                            .collect(),
+                        Rotations::U16(rotations_unorm) => rotations_unorm
+                            .map(|x| x.map(|y| y as f32 / 65535.0))
+                            .map(glam::Quat::from_array)
+                            .collect(),
+                        Rotations::F32(rotations_f32) => {
+                            rotations_f32.map(glam::Quat::from_array).collect()
+                        }
+                    };
+
+                    let keyframes: Vec<_> = inputs.zip(rotations_f32).collect();
+                    let mut rasterized_frames = Vec::with_capacity(num_frames as usize);
+
+                    for frame_index in 0..num_frames {
+                        let frame_time = frame_index as f32 / animation_fps as f32;
+
+                        let keyframe_before = keyframes
+                            .iter()
+                            .rfind(|(t, _)| *t <= frame_time)
+                            .unwrap_or_else(|| keyframes.first().unwrap());
+                        let keyframe_after = keyframes
+                            .iter()
+                            .find(|(t, _)| *t >= frame_time)
+                            .unwrap_or_else(|| keyframes.last().unwrap());
+
+                        let value = match interpolation {
+                            Interpolation::Linear => {
+                                if keyframe_before == keyframe_after {
+                                    keyframe_before.1
+                                } else {
+                                    let lerp_factor = (frame_time - keyframe_before.0)
+                                        / (keyframe_after.0 - keyframe_before.0);
+                                    keyframe_before.1.slerp(keyframe_after.1, lerp_factor)
+                                }
+                            }
+                            Interpolation::Step => keyframe_before.1,
+                            Interpolation::CubicSpline => todo!(),
+                        };
+
+                        rasterized_frames.push(roselib::utils::Quaternion {
+                            x: value.x,
+                            y: -value.z,
+                            z: value.y,
+                            w: value.w,
+                        });
+                    }
+
+                    zmo.channels.push(roselib::files::zmo::Channel {
+                        typ: roselib::files::zmo::ChannelType::Rotation,
+                        index: target_bone_index,
+                        frames: roselib::files::zmo::ChannelData::Rotation(rasterized_frames),
+                    });
+                }
+                ReadOutputs::Scales(scales) => {
+                    let keyframes: Vec<_> = inputs.zip(scales.map(glam::Vec3::from)).collect();
+                    let mut rasterized_frames = Vec::with_capacity(num_frames as usize);
+
+                    for frame_index in 0..num_frames {
+                        let frame_time = frame_index as f32 / animation_fps as f32;
+
+                        let keyframe_before = keyframes
+                            .iter()
+                            .rfind(|(t, _)| *t <= frame_time)
+                            .unwrap_or_else(|| keyframes.first().unwrap());
+                        let keyframe_after = keyframes
+                            .iter()
+                            .find(|(t, _)| *t >= frame_time)
+                            .unwrap_or_else(|| keyframes.last().unwrap());
+
+                        let value = match interpolation {
+                            Interpolation::Linear => {
+                                let lerp_factor = (frame_time - keyframe_before.0)
+                                    / (keyframe_after.0 - keyframe_before.0);
+                                keyframe_before.1.lerp(keyframe_after.1, lerp_factor)
+                            }
+                            Interpolation::Step => keyframe_before.1,
+                            Interpolation::CubicSpline => todo!(),
+                        };
+
+                        rasterized_frames.push((value.x + value.y + value.z) / 3.0);
+                    }
+
+                    zmo.channels.push(roselib::files::zmo::Channel {
+                        typ: roselib::files::zmo::ChannelType::Scale,
+                        index: target_bone_index,
+                        frames: roselib::files::zmo::ChannelData::Scale(rasterized_frames),
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        let out_path = PathBuf::from(
+            animation
+                .name()
+                .map(|x| x.to_string())
+                .unwrap_or(format!("animation_{}.zmo", animation_index)),
+        );
+        zmo.write_to_path(&out_path)
             .expect("Failed to write output file");
     }
 }
