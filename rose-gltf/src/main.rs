@@ -21,16 +21,24 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
     let index_data_buffer_view_index = vertex_data_buffer_view_index + 1;
 
     if zms.positions_enabled() {
-        let mut min_pos = zms.vertices[0].position;
-        let mut max_pos = zms.vertices[0].position;
+        let mut min_pos = Vec3::new(
+            zms.vertices[0].position.x,
+            zms.vertices[0].position.z,
+            -zms.vertices[0].position.y,
+        );
+        let mut max_pos = Vec3::new(
+            zms.vertices[0].position.x,
+            zms.vertices[0].position.z,
+            -zms.vertices[0].position.y,
+        );
         for vertex in zms.vertices.iter() {
             min_pos.x = min_pos.x.min(vertex.position.x);
-            min_pos.y = min_pos.y.min(vertex.position.y);
-            min_pos.z = min_pos.z.min(vertex.position.z);
+            min_pos.y = min_pos.y.min(vertex.position.z);
+            min_pos.z = min_pos.z.min(-vertex.position.y);
 
             max_pos.x = max_pos.x.max(vertex.position.x);
-            max_pos.y = max_pos.y.max(vertex.position.y);
-            max_pos.z = max_pos.z.max(vertex.position.z);
+            max_pos.y = max_pos.y.max(vertex.position.z);
+            max_pos.z = max_pos.z.max(-vertex.position.y);
         }
 
         let accessor_index = root.accessors.len() as u32;
@@ -45,8 +53,8 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
             extensions: Default::default(),
             extras: Default::default(),
             type_: Valid(json::accessor::Type::Vec3),
-            min: Some(json!(vec![min_pos.x, min_pos.z, -min_pos.y])),
-            max: Some(json!(vec![max_pos.x, max_pos.z, -max_pos.y])),
+            min: Some(json!([min_pos.x, min_pos.y, min_pos.z])),
+            max: Some(json!([max_pos.x, max_pos.y, max_pos.z])),
             normalized: false,
             sparse: None,
         });
@@ -333,16 +341,31 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
             binary_data.put_f32_le(vertex.bone_weights.z);
             binary_data.put_f32_le(vertex.bone_weights.w);
 
-            binary_data.put_i16_le(zms.bones[vertex.bone_indices.x as usize]);
-            binary_data.put_i16_le(zms.bones[vertex.bone_indices.y as usize]);
-            binary_data.put_i16_le(zms.bones[vertex.bone_indices.z as usize]);
-            binary_data.put_i16_le(zms.bones[vertex.bone_indices.w as usize]);
+            binary_data.put_i16_le(if vertex.bone_weights.x == 0.0 {
+                0
+            } else {
+                zms.bones[vertex.bone_indices.x as usize]
+            });
+            binary_data.put_i16_le(if vertex.bone_weights.y == 0.0 {
+                0
+            } else {
+                zms.bones[vertex.bone_indices.y as usize]
+            });
+            binary_data.put_i16_le(if vertex.bone_weights.z == 0.0 {
+                0
+            } else {
+                zms.bones[vertex.bone_indices.z as usize]
+            });
+            binary_data.put_i16_le(if vertex.bone_weights.w == 0.0 {
+                0
+            } else {
+                zms.bones[vertex.bone_indices.w as usize]
+            });
         }
     }
     let vertex_data_length = binary_data.len() as u32 - vertex_data_start;
 
     let index_data_start = binary_data.len() as u32;
-    let index_data_stride = 2;
     for triangle in zms.indices.iter() {
         binary_data.put_i16_le(triangle.x);
         binary_data.put_i16_le(triangle.y);
@@ -366,10 +389,10 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
         buffer: json::Index::new(0),
         byte_length: index_data_length as u32,
         byte_offset: Some(index_data_start),
-        byte_stride: Some(index_data_stride),
+        byte_stride: None,
         extensions: Default::default(),
         extras: Default::default(),
-        target: Some(Valid(json::buffer::Target::ArrayBuffer)),
+        target: Some(Valid(json::buffer::Target::ElementArrayBuffer)),
     });
 
     let indices_accessor_index = root.accessors.len() as u32;
@@ -433,6 +456,11 @@ fn load_skeleton(
     let mut joints = Vec::new();
     let mut bind_pose = Vec::new();
 
+    // Add root node to scene
+    root.scenes[0]
+        .nodes
+        .push(json::Index::new(root.nodes.len() as u32));
+
     // Create nodes for each bone
     for i in 0..zmd.bones.len() {
         let bone = &zmd.bones[i];
@@ -461,6 +489,7 @@ fn load_skeleton(
             skin: None,
             weights: None,
         });
+
         joints.push(json::Index::new(bone_node_index_start as u32 + i as u32));
         bind_pose.push(glam::Mat4::from_rotation_translation(rotation, translation));
     }
@@ -493,7 +522,6 @@ fn load_skeleton(
         }
     }
     let skeleton_data_length = binary_data.len() as u32 - skeleton_data_start;
-    let skeleton_data_stride = 4 * 16;
 
     let buffer_view_index = root.buffer_views.len() as u32;
     root.buffer_views.push(json::buffer::View {
@@ -501,10 +529,10 @@ fn load_skeleton(
         buffer: json::Index::new(0),
         byte_length: skeleton_data_length as u32,
         byte_offset: Some(skeleton_data_start),
-        byte_stride: Some(skeleton_data_stride),
+        byte_stride: None,
         extensions: Default::default(),
         extras: Default::default(),
-        target: Some(Valid(json::buffer::Target::ArrayBuffer)),
+        target: None,
     });
 
     let accessor_index = root.accessors.len() as u32;
@@ -553,7 +581,6 @@ fn load_skeletal_animation(
         binary_data.put_f32_le(i as f32 / fps)
     }
     let keyframe_time_length = binary_data.len() as u32 - keyframe_time_start;
-    let keyframe_time_stride = 4;
 
     let buffer_view_index = root.buffer_views.len() as u32;
     root.buffer_views.push(json::buffer::View {
@@ -561,10 +588,10 @@ fn load_skeletal_animation(
         buffer: json::Index::new(0),
         byte_length: keyframe_time_length as u32,
         byte_offset: Some(keyframe_time_start),
-        byte_stride: Some(keyframe_time_stride),
+        byte_stride: None,
         extensions: Default::default(),
         extras: Default::default(),
-        target: Some(Valid(json::buffer::Target::ArrayBuffer)),
+        target: None,
     });
 
     let keyframe_time_accessor_index = json::Index::new(root.accessors.len() as u32);
@@ -579,8 +606,8 @@ fn load_skeletal_animation(
         extensions: Default::default(),
         extras: Default::default(),
         type_: Valid(json::accessor::Type::Scalar),
-        min: None,
-        max: None,
+        min: Some(json!([0.0])),
+        max: Some(json!([(zmo.frames - 1) as f32 / fps])),
         normalized: false,
         sparse: None,
     });
@@ -594,15 +621,13 @@ fn load_skeletal_animation(
         }
 
         let keyframe_data_start = binary_data.len() as u32;
-        let keyframe_data_stride = match &channel.frames {
+        match &channel.frames {
             ChannelData::Position(positions) => {
                 for position in positions.iter() {
                     binary_data.put_f32_le(position.x / 100.0);
                     binary_data.put_f32_le(position.z / 100.0);
                     binary_data.put_f32_le(-position.y / 100.0);
                 }
-
-                4 * 3
             }
             ChannelData::Rotation(rotations) => {
                 for rotation in rotations.iter() {
@@ -611,8 +636,6 @@ fn load_skeletal_animation(
                     binary_data.put_f32_le(-rotation.y);
                     binary_data.put_f32_le(rotation.w);
                 }
-
-                4 * 4
             }
             ChannelData::Scale(scales) => {
                 for scale in scales.iter() {
@@ -620,8 +643,6 @@ fn load_skeletal_animation(
                     binary_data.put_f32_le(*scale);
                     binary_data.put_f32_le(*scale);
                 }
-
-                4 * 3
             }
             _ => unreachable!(),
         };
@@ -633,10 +654,10 @@ fn load_skeletal_animation(
             buffer: json::Index::new(0),
             byte_length: keyframe_data_length as u32,
             byte_offset: Some(keyframe_data_start),
-            byte_stride: Some(keyframe_data_stride),
+            byte_stride: None,
             extensions: Default::default(),
             extras: Default::default(),
-            target: Some(Valid(json::buffer::Target::ArrayBuffer)),
+            target: None,
         });
 
         let keyframe_data_accessor_index = json::Index::new(root.accessors.len() as u32);
@@ -717,14 +738,15 @@ fn main() {
         .values_of("input-files")
         .expect("No input files specified");
 
-    let mut root = json::Root::default();
     let mut binary_data = BytesMut::with_capacity(8 * 1024 * 1024);
-    let mut scene = json::Scene {
+    let mut root = json::Root::default();
+    root.scenes.push(json::Scene {
         name: None,
         extensions: Default::default(),
         extras: Default::default(),
         nodes: Default::default(),
-    };
+    });
+
     let mut skin_index = None;
 
     for input_file in input_files {
@@ -780,7 +802,7 @@ fn main() {
                     },
                     weights: None,
                 });
-                scene.nodes.push(json::Index::new(node_index));
+                root.scenes[0].nodes.push(json::Index::new(node_index));
             }
             unknown => {
                 panic!("Unsupported file extension {}", unknown);
