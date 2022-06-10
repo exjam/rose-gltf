@@ -436,6 +436,15 @@ fn load_skeleton(
     // Create nodes for each bone
     for i in 0..zmd.bones.len() {
         let bone = &zmd.bones[i];
+        let translation = Vec3::new(bone.position.x, bone.position.z, -bone.position.y) / 100.0;
+        let rotation = Quat::from_xyzw(
+            bone.rotation.x,
+            bone.rotation.z,
+            -bone.rotation.y,
+            bone.rotation.w,
+        )
+        .normalize();
+
         root.nodes.push(json::Node {
             name: Some(format!("{}_Bone_{}", name, i)),
             camera: None,
@@ -445,29 +454,14 @@ fn load_skeleton(
             matrix: None,
             mesh: None,
             rotation: Some(UnitQuaternion([
-                bone.rotation.x,
-                bone.rotation.z,
-                -bone.rotation.y,
-                bone.rotation.w,
+                rotation.x, rotation.y, rotation.z, rotation.w,
             ])),
             scale: None,
-            translation: Some([
-                bone.position.x / 100.0,
-                bone.position.z / 100.0,
-                -bone.position.y / 100.0,
-            ]),
+            translation: Some([translation.x, translation.y, translation.z]),
             skin: None,
             weights: None,
         });
         joints.push(json::Index::new(bone_node_index_start as u32 + i as u32));
-
-        let translation = Vec3::new(bone.position.x, bone.position.z, -bone.position.y) / 100.0;
-        let rotation = Quat::from_xyzw(
-            bone.rotation.x,
-            bone.rotation.z,
-            -bone.rotation.y,
-            bone.rotation.w,
-        );
         bind_pose.push(glam::Mat4::from_rotation_translation(rotation, translation));
     }
 

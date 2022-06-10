@@ -433,29 +433,27 @@ fn main() {
                     });
                 }
                 ReadOutputs::Rotations(rotations) => {
-                    let rotations_f32: Vec<glam::Quat> = match rotations {
-                        Rotations::I8(rotations_snorm) => rotations_snorm
-                            .map(|x| x.map(|y| y as f32 / 127.0))
+                    let rotations: Vec<glam::Quat> = match rotations {
+                        Rotations::I8(normalized) => normalized
+                            .map(|xyzw| xyzw.map(|n| n as f32 / 127.0))
                             .map(glam::Quat::from_array)
                             .collect(),
-                        Rotations::U8(rotations_unorm) => rotations_unorm
-                            .map(|x| x.map(|y| y as f32 / 255.0))
+                        Rotations::U8(normalized) => normalized
+                            .map(|xyzw| xyzw.map(|n| n as f32 / 255.0))
                             .map(glam::Quat::from_array)
                             .collect(),
-                        Rotations::I16(rotations_snorm) => rotations_snorm
-                            .map(|x| x.map(|y| y as f32 / 32767.0))
+                        Rotations::I16(normalized) => normalized
+                            .map(|xyzw| xyzw.map(|n| n as f32 / 32767.0))
                             .map(glam::Quat::from_array)
                             .collect(),
-                        Rotations::U16(rotations_unorm) => rotations_unorm
-                            .map(|x| x.map(|y| y as f32 / 65535.0))
+                        Rotations::U16(normalized) => normalized
+                            .map(|xyze| xyze.map(|n| n as f32 / 65535.0))
                             .map(glam::Quat::from_array)
                             .collect(),
-                        Rotations::F32(rotations_f32) => {
-                            rotations_f32.map(glam::Quat::from_array).collect()
-                        }
+                        Rotations::F32(xyzw) => xyzw.map(glam::Quat::from_array).collect(),
                     };
 
-                    let keyframes: Vec<_> = inputs.zip(rotations_f32).collect();
+                    let keyframes: Vec<_> = inputs.zip(rotations).collect();
                     let mut rasterized_frames = Vec::with_capacity(num_frames as usize);
 
                     for frame_index in 0..num_frames {
@@ -483,11 +481,13 @@ fn main() {
                             Interpolation::Step => keyframe_before.1,
                             Interpolation::CubicSpline => todo!(),
                         };
+                        let value =
+                            glam::Quat::from_xyzw(value.x, -value.z, value.y, value.w).normalize();
 
                         rasterized_frames.push(roselib::utils::Quaternion {
                             x: value.x,
-                            y: -value.z,
-                            z: value.y,
+                            y: value.y,
+                            z: value.z,
                             w: value.w,
                         });
                     }
