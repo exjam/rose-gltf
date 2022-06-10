@@ -45,8 +45,8 @@ fn load_mesh(root: &mut json::Root, binary_data: &mut BytesMut, name: &str, zms:
             extensions: Default::default(),
             extras: Default::default(),
             type_: Valid(json::accessor::Type::Vec3),
-            min: Some(json!(vec![min_pos.x, min_pos.y, min_pos.z])),
-            max: Some(json!(vec![max_pos.x, max_pos.y, max_pos.z])),
+            min: Some(json!(vec![min_pos.x, min_pos.z, -min_pos.y])),
+            max: Some(json!(vec![max_pos.x, max_pos.z, -max_pos.y])),
             normalized: false,
             sparse: None,
         });
