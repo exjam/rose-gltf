@@ -11,3 +11,4 @@ gltf = "1.0.0"
 gltf-json = "1.0.0"
 roselib = { git = "https://github.com/exjam/rose-tools", rev = "74e440dbba51f1f0631ba24aff3a72f918e306b8" }
 serde_json = "1"
+image = "0.24.7"
