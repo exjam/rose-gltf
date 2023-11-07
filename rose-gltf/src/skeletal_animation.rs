@@ -113,7 +113,7 @@ pub fn load_skeleton(
     root.accessors.push(accessor::Accessor {
         name: Some(format!("{}_SkeletonAccessor", name)),
         buffer_view: Some(Index::new(buffer_view_index)),
-        byte_offset: 0,
+        byte_offset: Some(0),
         count: inverse_bind_pose.len() as u32,
         component_type: Checked::Valid(accessor::GenericComponentType(
             accessor::ComponentType::F32,
@@ -174,7 +174,7 @@ pub fn load_skeletal_animation(
     root.accessors.push(accessor::Accessor {
         name: Some(format!("{}_KeyframeTimesAccessor", name)),
         buffer_view: Some(Index::new(buffer_view_index)),
-        byte_offset: 0,
+        byte_offset: Some(0),
         count: zmo.frames,
         component_type: Checked::Valid(accessor::GenericComponentType(
             accessor::ComponentType::F32,
@@ -240,7 +240,7 @@ pub fn load_skeletal_animation(
         root.accessors.push(accessor::Accessor {
             name: Some(format!("{}_Channel{}_DataAccessor", name, channel_id)),
             buffer_view: Some(Index::new(buffer_view_index)),
-            byte_offset: 0,
+            byte_offset: Some(0),
             count: zmo.frames,
             component_type: Checked::Valid(accessor::GenericComponentType(
                 accessor::ComponentType::F32,

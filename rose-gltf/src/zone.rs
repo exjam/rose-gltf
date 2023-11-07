@@ -1,9 +1,14 @@
 use std::{io::Cursor, path::PathBuf};
 
 use bytes::{BufMut, BytesMut};
-use glam::{Vec2, Vec3};
+use glam::{Vec2, Vec3, EulerRot, Quat};
 use gltf_json::{
-    buffer, material, mesh,
+    buffer,
+    extensions::{
+        self,
+        scene::khr_lights_punctual::{KhrLightsPunctual, Light},
+    },
+    material, mesh,
     scene::{self, UnitQuaternion},
     texture,
     validation::Checked,
@@ -380,9 +385,51 @@ pub fn load_zone(
     deco: &mut ObjectList,
     cnst: &mut ObjectList,
 ) {
-    let mut blocks = Vec::new();
+    // Add a directional light to the scene
+    root.extensions_used.push("KHR_lights_punctual".to_string());
+    root.extensions = Some(extensions::Root {
+        khr_lights_punctual: Some(extensions::root::KhrLightsPunctual {
+            lights: vec![Light {
+                name: Some("the_sun".to_string()),
+                color: [1.0, 1.0, 1.0],
+                intensity: 1.0,
+                type_: Checked::Valid(extensions::scene::khr_lights_punctual::Type::Directional),
+                range: None,
+                spot: None,
+                extensions: Default::default(),
+                extras: Default::default(),
+            }],
+        }),
+    });
+    let light_direction = Quat::from_euler(
+        EulerRot::ZYX,
+        0.0,
+        std::f32::consts::PI * (2.0 / 3.0),
+        -std::f32::consts::PI / 4.0,
+    );
+    let light_node = Index::new(root.nodes.len() as u32);
+    root.nodes.push(scene::Node {
+        extensions: Some(extensions::scene::Node {
+            khr_lights_punctual: Some(extensions::scene::khr_lights_punctual::KhrLightsPunctual {
+                light: Index::new(0),
+            }),
+        }),
+        camera: None,
+        children: None,
+        extras: Default::default(),
+        matrix: None,
+        mesh: None,
+        name: None,
+        rotation: Some(UnitQuaternion(light_direction.to_array())),
+        scale: Some([1.0, 1.0, 1.0]),
+        translation: Some([0.0, 0.0, 0.0]),
+        skin: None,
+        weights: None,
+    });
+    root.scenes[0].nodes.push(light_node);
 
     // Find all blocks
+    let mut blocks = Vec::new();
     for block_y in 0..64 {
         for block_x in 0..64 {
             let ifo = IFO::from_path(&map_path.join(format!("{}_{}.ifo", block_x, block_y)));

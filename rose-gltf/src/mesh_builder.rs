@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use bytes::{BufMut, BytesMut};
 use glam::{Vec2, Vec3, Vec4};
@@ -26,7 +26,7 @@ pub struct MeshBuilder {
 
 #[derive(Clone)]
 pub struct MeshData {
-    pub attributes: HashMap<Checked<Semantic>, Index<accessor::Accessor>>,
+    pub attributes: BTreeMap<Checked<Semantic>, Index<accessor::Accessor>>,
     pub indices: Index<accessor::Accessor>,
 }
 
@@ -99,7 +99,7 @@ impl MeshBuilder {
         binary_data: &mut BytesMut,
         name: &str,
     ) -> MeshData {
-        let mut attributes = HashMap::new();
+        let mut attributes = BTreeMap::new();
         let mut vertex_data_stride = 0;
         let vertex_count = self.position.len();
         let vertex_buffer_view = Index::new(root.buffer_views.len() as u32);
@@ -109,7 +109,7 @@ impl MeshBuilder {
         root.accessors.push(accessor::Accessor {
             name: Some(format!("{}_position", name)),
             buffer_view: Some(vertex_buffer_view),
-            byte_offset: vertex_data_stride,
+            byte_offset: Some(vertex_data_stride),
             count: vertex_count as u32,
             component_type: Checked::Valid(accessor::GenericComponentType(
                 accessor::ComponentType::F32,
@@ -130,7 +130,7 @@ impl MeshBuilder {
             root.accessors.push(accessor::Accessor {
                 name: Some(format!("{}_normal", name)),
                 buffer_view: Some(vertex_buffer_view),
-                byte_offset: vertex_data_stride,
+                byte_offset: Some(vertex_data_stride),
                 count: vertex_count as u32,
                 component_type: Checked::Valid(accessor::GenericComponentType(
                     accessor::ComponentType::F32,
@@ -152,7 +152,7 @@ impl MeshBuilder {
             root.accessors.push(accessor::Accessor {
                 name: Some(format!("{}_tangent", name)),
                 buffer_view: Some(vertex_buffer_view),
-                byte_offset: vertex_data_stride,
+                byte_offset: Some(vertex_data_stride),
                 count: vertex_count as u32,
                 component_type: Checked::Valid(accessor::GenericComponentType(
                     accessor::ComponentType::F32,
@@ -174,7 +174,7 @@ impl MeshBuilder {
             root.accessors.push(accessor::Accessor {
                 name: Some(format!("{}_color", name)),
                 buffer_view: Some(vertex_buffer_view),
-                byte_offset: vertex_data_stride,
+                byte_offset: Some(vertex_data_stride),
                 count: vertex_count as u32,
                 component_type: Checked::Valid(accessor::GenericComponentType(
                     accessor::ComponentType::F32,
@@ -196,7 +196,7 @@ impl MeshBuilder {
             root.accessors.push(accessor::Accessor {
                 name: Some(format!("{}_uv0", name)),
                 buffer_view: Some(vertex_buffer_view),
-                byte_offset: vertex_data_stride,
+                byte_offset: Some(vertex_data_stride),
                 count: vertex_count as u32,
                 component_type: Checked::Valid(accessor::GenericComponentType(
                     accessor::ComponentType::F32,
@@ -218,7 +218,7 @@ impl MeshBuilder {
             root.accessors.push(accessor::Accessor {
                 name: Some(format!("{}_uv1", name)),
                 buffer_view: Some(vertex_buffer_view),
-                byte_offset: vertex_data_stride,
+                byte_offset: Some(vertex_data_stride),
                 count: vertex_count as u32,
                 component_type: Checked::Valid(accessor::GenericComponentType(
                     accessor::ComponentType::F32,
@@ -240,7 +240,7 @@ impl MeshBuilder {
             root.accessors.push(accessor::Accessor {
                 name: Some(format!("{}_uv2", name)),
                 buffer_view: Some(vertex_buffer_view),
-                byte_offset: vertex_data_stride,
+                byte_offset: Some(vertex_data_stride),
                 count: vertex_count as u32,
                 component_type: Checked::Valid(accessor::GenericComponentType(
                     accessor::ComponentType::F32,
@@ -262,7 +262,7 @@ impl MeshBuilder {
             root.accessors.push(accessor::Accessor {
                 name: Some(format!("{}_uv3", name)),
                 buffer_view: Some(vertex_buffer_view),
-                byte_offset: vertex_data_stride,
+                byte_offset: Some(vertex_data_stride),
                 count: vertex_count as u32,
                 component_type: Checked::Valid(accessor::GenericComponentType(
                     accessor::ComponentType::F32,
@@ -284,7 +284,7 @@ impl MeshBuilder {
             root.accessors.push(accessor::Accessor {
                 name: Some(format!("{}_boneweight", name)),
                 buffer_view: Some(vertex_buffer_view),
-                byte_offset: vertex_data_stride,
+                byte_offset: Some(vertex_data_stride),
                 count: vertex_count as u32,
                 component_type: Checked::Valid(accessor::GenericComponentType(
                     accessor::ComponentType::F32,
@@ -306,7 +306,7 @@ impl MeshBuilder {
             root.accessors.push(accessor::Accessor {
                 name: Some(format!("{}_boneindex", name)),
                 buffer_view: Some(vertex_buffer_view),
-                byte_offset: vertex_data_stride,
+                byte_offset: Some(vertex_data_stride),
                 count: vertex_count as u32,
                 component_type: Checked::Valid(accessor::GenericComponentType(
                     accessor::ComponentType::U16,
@@ -420,7 +420,7 @@ impl MeshBuilder {
         root.accessors.push(accessor::Accessor {
             name: Some(format!("{}_Indices", name)),
             buffer_view: Some(index_buffer_view),
-            byte_offset: 0,
+            byte_offset: Some(0),
             count: self.indices.len() as u32,
             component_type: Checked::Valid(accessor::GenericComponentType(
                 accessor::ComponentType::U16,
