@@ -1,12 +1,10 @@
 [package]
-name = "gltf-rose"
+name = "make-lit"
 version = { workspace = true }
 edition = { workspace = true }
 
 [dependencies]
-bytes = { workspace = true }
 clap = { workspace = true }
 glam = { workspace = true }
-gltf = { workspace = true }
-gltf-json = { workspace = true }
+image = { workspace = true }
 roselib = { workspace = true }

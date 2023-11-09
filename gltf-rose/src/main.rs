@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use clap::Parser;
 use gltf::{
     animation::{
         util::{ReadOutputs, Rotations},
@@ -16,27 +17,24 @@ use roselib::{
     utils::Vector3,
 };
 
+/// Converts .gtlf file to ROSE files
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Input file path
+    #[arg(short, long)]
+    input: PathBuf,
+
+    /// FPS to use for ZMO
+    #[arg(short, long, default_value_t = 30)]
+    zmo_fps: u32,
+}
+
 fn main() {
-    let matches = clap::Command::new("rose-gltf")
-        .arg(clap::Arg::new("input-file").takes_value(true))
-        .arg(
-            clap::Arg::new("zmo-fps")
-                .takes_value(true)
-                .default_value("30"),
-        )
-        .get_matches();
+    let args = Args::parse();
+    let animation_fps = args.zmo_fps;
 
-    let input_file = PathBuf::from(
-        matches
-            .value_of("input-file")
-            .expect("No input file specified"),
-    );
-    let animation_fps = matches
-        .value_of("zmo-fps")
-        .and_then(|x| x.parse::<u32>().ok())
-        .unwrap_or(30);
-
-    let (document, buffers, _images) = gltf::import(&input_file).expect("Failed to read GLTF file");
+    let (document, buffers, _images) = gltf::import(&args.input).expect("Failed to read GLTF file");
 
     for (mesh_index, mesh) in document.meshes().enumerate() {
         let primitive = mesh

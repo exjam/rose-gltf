@@ -5,6 +5,7 @@ use std::{
 };
 
 use bytes::{BufMut, BytesMut};
+use clap::Parser;
 use gltf_json::{buffer, scene, texture, validation::Checked, Index};
 use roselib::{
     files::{STB, ZMD, ZMO, ZMS, ZON, ZSC},
@@ -20,10 +21,31 @@ mod mesh;
 use mesh::load_mesh;
 
 mod skeletal_animation;
+use serde_json::value::RawValue;
 use skeletal_animation::{load_skeletal_animation, load_skeleton};
 
 mod zone;
 use zone::load_zone;
+
+/// Converts ROSE files to a .gltf file
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Output file path
+    #[arg(short, long = "out")]
+    output: PathBuf,
+
+    /// List of input files
+    input: Vec<PathBuf>,
+
+    /// When converting a zon, only use blocks with this x value.
+    #[arg(short, long)]
+    filter_block_x: Option<i32>,
+
+    /// When converting a zon, only use blocks with this y value.
+    #[arg(short, long)]
+    filter_block_y: Option<i32>,
+}
 
 fn pad_align(binary_data: &mut BytesMut) {
     while binary_data.len() % 4 != 0 {
@@ -48,38 +70,40 @@ fn find_assets_root_path(file_path: &Path) -> Option<PathBuf> {
 }
 
 fn main() {
-    let matches = clap::Command::new("rose-gltf")
-        .arg(
-            clap::Arg::new("out")
-                .short('o')
-                .long("out")
-                .takes_value(true),
-        )
-        .arg(
-            clap::Arg::new("input-files")
-                .takes_value(true)
-                .multiple_values(true),
-        )
-        .get_matches();
+    let args = Args::parse();
 
-    let output_file_path = PathBuf::from(matches.value_of("out").unwrap_or("out.glb"));
-    let input_files = matches
-        .values_of("input-files")
-        .expect("No input files specified");
+    let output_file_path = args.output;
+    let input_files = args.input;
 
     let mut binary_data = BytesMut::with_capacity(8 * 1024 * 1024);
     let mut root = gltf_json::Root::default();
     root.scenes.push(gltf_json::Scene {
         name: None,
         extensions: Default::default(),
-        extras: Default::default(),
+        extras: Some(
+            RawValue::from_string(
+                r#"{
+                    "TLM_SceneProperties": {
+                        "tlm_encoding_use": 1,
+                        "tlm_encoding_mode_a": 2,
+                        "tlm_format": 1
+                    },
+                    "TLM_EngineProperties": {
+                      "tlm_mode": 1,
+                      "tlm_quality": 4,
+                      "tlm_resolution_scale": 0
+                    }
+                }"#
+                .to_string(),
+            )
+            .unwrap(),
+        ),
         nodes: Default::default(),
     });
 
     let mut skin_index = None;
 
-    for input_file in input_files {
-        let file_path = PathBuf::from(input_file);
+    for file_path in input_files {
         let file_name = file_path.file_name().unwrap().to_str().unwrap().to_string();
         let file_extension = file_path
             .extension()
@@ -191,6 +215,8 @@ fn main() {
                     map_path,
                     &mut deco,
                     &mut cnst,
+                    args.filter_block_x,
+                    args.filter_block_y,
                 );
             }
             unknown => {

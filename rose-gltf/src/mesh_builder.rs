@@ -28,6 +28,8 @@ pub struct MeshBuilder {
 pub struct MeshData {
     pub attributes: BTreeMap<Checked<Semantic>, Index<accessor::Accessor>>,
     pub indices: Index<accessor::Accessor>,
+    pub surface_area: f32,
+    pub num_faces: usize,
 }
 
 impl MeshBuilder {
@@ -91,6 +93,48 @@ impl MeshBuilder {
 
     pub fn add_bone_index(&mut self, bone_index: Vec<[u16; 4]>) {
         self.bone_index = bone_index;
+    }
+
+    pub fn generate_normals(&mut self) {
+        let mut normals = vec![Vec3::ZERO; self.position.len()];
+
+        for triangle in self.indices.chunks_exact(3) {
+            let vertex_a = triangle[0];
+            let vertex_b = triangle[1];
+            let vertex_c = triangle[2];
+
+            let edge_a_b = self.position[vertex_b as usize] - self.position[vertex_a as usize];
+            let edge_a_c = self.position[vertex_c as usize] - self.position[vertex_a as usize];
+
+            let face_normal = edge_a_b.cross(edge_a_c);
+
+            normals[vertex_a as usize] += face_normal;
+            normals[vertex_b as usize] += face_normal;
+            normals[vertex_c as usize] += face_normal;
+        }
+
+        for normal in normals.iter_mut() {
+            *normal = normal.normalize();
+        }
+
+        self.normal = normals;
+    }
+
+    pub fn calculate_surface_area(&self) -> f32 {
+        let mut sum = 0.0;
+
+        for triangle in self.indices.chunks_exact(3) {
+            let vertex_a = triangle[0];
+            let vertex_b = triangle[1];
+            let vertex_c = triangle[2];
+
+            let edge_a_b = self.position[vertex_b as usize] - self.position[vertex_a as usize];
+            let edge_a_c = self.position[vertex_c as usize] - self.position[vertex_a as usize];
+
+            sum += edge_a_b.cross(edge_a_c).length() as f64;
+        }
+
+        (sum / 2.0) as f32
     }
 
     pub fn build(
@@ -437,6 +481,8 @@ impl MeshBuilder {
         MeshData {
             attributes,
             indices: index_buffer_accessor,
+            surface_area: self.calculate_surface_area(),
+            num_faces: self.indices.len() / 3,
         }
     }
 }

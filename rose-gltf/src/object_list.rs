@@ -74,6 +74,7 @@ impl ObjectList {
             binary_data,
             &format!("{}_mesh_{}", name_prefix, mesh_id),
             &zms,
+            true, // Seems like lots of objects have busted normals
         ))
     }
 

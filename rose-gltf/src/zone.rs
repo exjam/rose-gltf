@@ -1,7 +1,7 @@
 use std::{io::Cursor, path::PathBuf};
 
 use bytes::{BufMut, BytesMut};
-use glam::{Vec2, Vec3, EulerRot, Quat};
+use glam::{EulerRot, Quat, Vec2, Vec3};
 use gltf_json::{
     buffer,
     extensions::{
@@ -18,6 +18,7 @@ use roselib::{
     files::{him::Heightmap, ifo::MapData, til::Tilemap, zon, HIM, IFO, TIL},
     io::RoseFile,
 };
+use serde_json::{json, value::RawValue};
 
 use crate::{
     mesh_builder::{MeshBuilder, MeshData},
@@ -384,6 +385,8 @@ pub fn load_zone(
     map_path: PathBuf,
     deco: &mut ObjectList,
     cnst: &mut ObjectList,
+    filter_block_x: Option<i32>,
+    filter_block_y: Option<i32>,
 ) {
     // Add a directional light to the scene
     root.extensions_used.push("KHR_lights_punctual".to_string());
@@ -391,8 +394,8 @@ pub fn load_zone(
         khr_lights_punctual: Some(extensions::root::KhrLightsPunctual {
             lights: vec![Light {
                 name: Some("the_sun".to_string()),
-                color: [1.0, 1.0, 1.0],
-                intensity: 1.0,
+                color: [0.88, 0.87, 0.84],
+                intensity: 4098.0,
                 type_: Checked::Valid(extensions::scene::khr_lights_punctual::Type::Directional),
                 range: None,
                 spot: None,
@@ -432,6 +435,14 @@ pub fn load_zone(
     let mut blocks = Vec::new();
     for block_y in 0..64 {
         for block_x in 0..64 {
+            if filter_block_x.is_some() && Some(block_x) != filter_block_x {
+                continue;
+            }
+
+            if filter_block_y.is_some() && Some(block_y) != filter_block_y {
+                continue;
+            }
+
             let ifo = IFO::from_path(&map_path.join(format!("{}_{}.ifo", block_x, block_y)));
             let him = HIM::from_path(&map_path.join(format!("{}_{}.him", block_x, block_y)));
             let til = TIL::from_path(&map_path.join(format!("{}_{}.til", block_x, block_y)));
@@ -506,7 +517,20 @@ pub fn load_zone(
                 camera: None,
                 children: None,
                 extensions: Default::default(),
-                extras: Default::default(),
+                extras: Some(
+                    RawValue::from_string(format!(
+                        r#"{{
+                    "TLM_ObjectProperties": {{
+                        "tlm_mesh_lightmap_use": 1,
+                        "tlm_mesh_lightmap_resolution": {},
+                        "tlm_use_default_channel": 0,
+                        "tlm_uv_channel": "UVMap.001"
+                    }}
+                }}"#,
+                        4
+                    ))
+                    .unwrap(),
+                ),
                 matrix: None,
                 mesh: Some(heightmap_mesh),
                 name: Some(format!("{}_{}_heightmap", block.block_x, block.block_y,)),
@@ -524,6 +548,8 @@ pub fn load_zone(
             let mut children = Vec::new();
             let object_id = object_instance.object_id as usize;
             let object = &deco.zsc.objects[object_id];
+            let object_scale =
+                (object_instance.scale.x + object_instance.scale.y + object_instance.scale.z) / 3.0;
 
             // Spawn a node for each object part
             for (part_index, part) in object.parts.iter().enumerate() {
@@ -531,8 +557,8 @@ pub fn load_zone(
                 let mesh_index = root.meshes.len() as u32;
                 root.meshes.push(mesh::Mesh {
                     name: Some(format!(
-                        "{}_{}_obj{}_deco{}_part{}_mesh",
-                        block.block_x, block.block_y, object_instance_index, object_id, part_index
+                        "{}_{}_deco_{}_{}_mesh",
+                        block.block_x, block.block_y, object_instance_index, part_index
                     )),
                     extensions: Default::default(),
                     extras: Default::default(),
@@ -548,18 +574,47 @@ pub fn load_zone(
                     weights: None,
                 });
 
+                // These variable names are from the original 3ds max import script.
+                let part_scale = object_scale * (part.scale.x + part.scale.y + part.scale.z) / 3.0;
+                let true_face_area = mesh_data.surface_area;
+                let many_face_avt = (mesh_data.num_faces as f32) / 5000.0;
+                let auto_rtt_map_size =
+                    (true_face_area + true_face_area * many_face_avt) * part_scale;
+                let lightmap_size = if auto_rtt_map_size > 2500.0 {
+                    3 // 256
+                } else if auto_rtt_map_size > 150.0 {
+                    2 // 128
+                } else if auto_rtt_map_size > 11.0 {
+                    1 // 64
+                } else {
+                    0 // 32
+                };
+
                 let node_index = Index::new(root.nodes.len() as u32);
                 root.nodes.push(scene::Node {
+                    name: Some(format!(
+                        "{}_{}_deco_{}_{}_",
+                        block.block_x, block.block_y, object_instance_index, part_index
+                    )),
                     camera: None,
                     children: None,
                     extensions: Default::default(),
-                    extras: Default::default(),
+                    extras: Some(
+                        RawValue::from_string(format!(
+                            r#"{{
+                        "TLM_ObjectProperties": {{
+                            "tlm_mesh_lightmap_use": 1,
+                            "tlm_mesh_lightmap_resolution": {},
+                            "tlm_use_default_channel": 0,
+                            "tlm_uv_channel": "UVMap.001"
+                        }}
+                    }}"#,
+                            lightmap_size
+                        ))
+                        .unwrap(),
+                    ),
                     matrix: None,
                     mesh: Some(Index::new(mesh_index)),
-                    name: Some(format!(
-                        "{}_{}_obj{}_deco{}_part{}",
-                        block.block_x, block.block_y, object_instance_index, object_id, part_index
-                    )),
                     rotation: Some(convert_rotation(part.rotation)),
                     scale: Some([part.scale.x, part.scale.y, part.scale.z]),
                     translation: Some(convert_position(part.position)),
@@ -579,8 +634,8 @@ pub fn load_zone(
                 matrix: None,
                 mesh: None,
                 name: Some(format!(
-                    "{}_{}_obj{}_deco{}",
-                    block.block_x, block.block_y, object_instance_index, object_id
+                    "{}_{}_deco_{}",
+                    block.block_x, block.block_y, object_instance_index,
                 )),
                 rotation: Some(convert_rotation(object_instance.rotation)),
                 scale: Some([
@@ -600,6 +655,8 @@ pub fn load_zone(
             let mut children = Vec::new();
             let object_id = object_instance.object_id as usize;
             let object = &cnst.zsc.objects[object_id];
+            let object_scale =
+                (object_instance.scale.x + object_instance.scale.y + object_instance.scale.z) / 3.0;
 
             // Spawn a node for each object part
             for (part_index, part) in object.parts.iter().enumerate() {
@@ -607,8 +664,8 @@ pub fn load_zone(
                 let mesh_index = root.meshes.len() as u32;
                 root.meshes.push(mesh::Mesh {
                     name: Some(format!(
-                        "{}_{}_obj{}_cnst{}_part{}_mesh",
-                        block.block_x, block.block_y, object_instance_index, object_id, part_index
+                        "{}_{}_cnst_{}_{}_mesh",
+                        block.block_x, block.block_y, object_instance_index, part_index
                     )),
                     extensions: Default::default(),
                     extras: Default::default(),
@@ -624,17 +681,46 @@ pub fn load_zone(
                     weights: None,
                 });
 
+                // These variable names are from the original 3ds max import script.
+                let part_scale = object_scale * (part.scale.x + part.scale.y + part.scale.z) / 3.0;
+                let true_face_area = mesh_data.surface_area;
+                let many_face_avt = (mesh_data.num_faces as f32) / 5000.0;
+                let auto_rtt_map_size =
+                    (true_face_area + true_face_area * many_face_avt) * part_scale;
+                let lightmap_size = if auto_rtt_map_size > 2500.0 {
+                    3 // 256
+                } else if auto_rtt_map_size > 150.0 {
+                    2 // 128
+                } else if auto_rtt_map_size > 11.0 {
+                    1 // 64
+                } else {
+                    0 // 32
+                };
+
                 children.push(Index::new(root.nodes.len() as u32));
                 root.nodes.push(scene::Node {
                     camera: None,
                     children: None,
                     extensions: Default::default(),
-                    extras: Default::default(),
+                    extras: Some(
+                        RawValue::from_string(format!(
+                            r#"{{
+                                "TLM_ObjectProperties": {{
+                                    "tlm_mesh_lightmap_use": 1,
+                                    "tlm_mesh_lightmap_resolution": {},
+                                    "tlm_use_default_channel": 0,
+                                    "tlm_uv_channel": "UVMap.001"
+                                }}
+                            }}"#,
+                            lightmap_size
+                        ))
+                        .unwrap(),
+                    ),
                     matrix: None,
                     mesh: Some(Index::new(mesh_index)),
                     name: Some(format!(
-                        "{}_{}_obj{}_cnst{}_part{}",
-                        block.block_x, block.block_y, object_instance_index, object_id, part_index
+                        "{}_{}_cnst_{}_{}",
+                        block.block_x, block.block_y, object_instance_index, part_index
                     )),
                     rotation: Some(convert_rotation(part.rotation)),
                     scale: Some([part.scale.x, part.scale.y, part.scale.z]),
@@ -654,8 +740,8 @@ pub fn load_zone(
                 matrix: None,
                 mesh: None,
                 name: Some(format!(
-                    "{}_{}_obj{}_cnst{}",
-                    block.block_x, block.block_y, object_instance_index, object_id
+                    "{}_{}_cnst_{}",
+                    block.block_x, block.block_y, object_instance_index,
                 )),
                 rotation: Some(convert_rotation(object_instance.rotation)),
                 scale: Some([

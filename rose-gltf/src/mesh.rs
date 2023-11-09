@@ -10,6 +10,7 @@ pub fn load_mesh_data(
     binary_data: &mut BytesMut,
     name: &str,
     zms: &ZMS,
+    regenerate_normals: bool,
 ) -> MeshData {
     let mut mesh_builder = MeshBuilder::new();
     mesh_builder.add_indices(
@@ -26,13 +27,15 @@ pub fn load_mesh_data(
             .collect(),
     );
 
-    if zms.normals_enabled() {
+    if !regenerate_normals && zms.normals_enabled() {
         mesh_builder.add_normals(
             zms.vertices
                 .iter()
                 .map(|vertex| Vec3::new(vertex.normal.x, vertex.normal.z, -vertex.normal.y))
                 .collect(),
         );
+    } else {
+        mesh_builder.generate_normals();
     }
 
     if zms.tangents_enabled() {
@@ -150,7 +153,7 @@ pub fn load_mesh(
     name: &str,
     zms: &ZMS,
 ) -> u32 {
-    let mesh_data = load_mesh_data(root, binary_data, name, zms);
+    let mesh_data = load_mesh_data(root, binary_data, name, zms, false);
     let mesh_index = root.meshes.len() as u32;
     root.meshes.push(mesh::Mesh {
         name: Some(name.into()),
@@ -167,6 +170,5 @@ pub fn load_mesh(
         }],
         weights: None,
     });
-
     mesh_index
 }
