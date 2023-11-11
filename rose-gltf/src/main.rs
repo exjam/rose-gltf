@@ -39,12 +39,16 @@ struct Args {
     input: Vec<PathBuf>,
 
     /// When converting a zon, only use blocks with this x value.
-    #[arg(short, long)]
+    #[arg(long)]
     filter_block_x: Option<i32>,
 
     /// When converting a zon, only use blocks with this y value.
-    #[arg(short, long)]
+    #[arg(long)]
     filter_block_y: Option<i32>,
+
+    /// Choose better triangulation for heightmaps, though it may not match your ROSE client.
+    #[arg(long, default_value_t = true)]
+    use_better_heightmap_triangles: bool,
 }
 
 fn pad_align(binary_data: &mut BytesMut) {
@@ -215,6 +219,7 @@ fn main() {
                     map_path,
                     &mut deco,
                     &mut cnst,
+                    args.use_better_heightmap_triangles,
                     args.filter_block_x,
                     args.filter_block_y,
                 );

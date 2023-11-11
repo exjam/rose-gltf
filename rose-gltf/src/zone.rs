@@ -303,6 +303,7 @@ fn generate_terrain_mesh(
     root: &mut gltf_json::Root,
     binary_data: &mut BytesMut,
     block: &BlockData,
+    use_better_heightmap_triangles: bool,
 ) -> MeshData {
     let mut positions = Vec::new();
     let mut normals = Vec::new();
@@ -352,13 +353,41 @@ fn generate_terrain_mesh(
             for y in 0..(5 - 1) {
                 for x in 0..(5 - 1) {
                     let start = tile_indices_base + y * 5 + x;
-                    indices.push(start);
-                    indices.push(start + 5);
-                    indices.push(start + 1);
+                    let tl = start;
+                    let tr = start + 1;
+                    let bl = start + 5;
+                    let br = start + 1 + 5;
 
-                    indices.push(start + 1);
-                    indices.push(start + 5);
-                    indices.push(start + 1 + 5);
+                    // Choose the triangle edge which is shortest
+                    let edge_tl_br = (positions[tl as usize].y - positions[br as usize].y).abs();
+                    let edge_bl_tr = (positions[bl as usize].y - positions[tr as usize].y).abs();
+                    if use_better_heightmap_triangles && edge_tl_br < edge_bl_tr {
+                        /*
+                         * tl-tr
+                         * | \ |
+                         * bl-br
+                         */
+                        indices.push(tl);
+                        indices.push(bl);
+                        indices.push(br);
+
+                        indices.push(tl);
+                        indices.push(br);
+                        indices.push(tr);
+                    } else {
+                        /*
+                         * tl-tr
+                         * | / |
+                         * bl-br
+                         */
+                        indices.push(tl);
+                        indices.push(bl);
+                        indices.push(tr);
+
+                        indices.push(tr);
+                        indices.push(bl);
+                        indices.push(br);
+                    }
                 }
             }
         }
@@ -385,6 +414,7 @@ pub fn load_zone(
     map_path: PathBuf,
     deco: &mut ObjectList,
     cnst: &mut ObjectList,
+    use_better_heightmap_triangles: bool,
     filter_block_x: Option<i32>,
     filter_block_y: Option<i32>,
 ) {
@@ -488,7 +518,8 @@ pub fn load_zone(
     for (block, block_terrain_material) in blocks.iter().zip(block_terrain_materials.iter()) {
         // Create heightmap mesh
         {
-            let mesh_data = generate_terrain_mesh(root, binary_data, block);
+            let mesh_data =
+                generate_terrain_mesh(root, binary_data, block, use_better_heightmap_triangles);
 
             let heightmap_mesh = Index::new(root.meshes.len() as u32);
             root.meshes.push(mesh::Mesh {
