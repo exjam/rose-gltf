@@ -488,8 +488,35 @@ pub fn load_zone(
         }
     }
 
+    let mut ocean_material = None;
+
     // Load all meshes and materials from used objects
     for block in blocks.iter() {
+        if !block.ifo.oceans.is_empty() && ocean_material.is_none() {
+            ocean_material = Some(Index::new(root.materials.len() as u32));
+            root.materials.push(material::Material {
+                name: Some("ocean_material".to_string()),
+                alpha_cutoff: None,
+                alpha_mode: Checked::Valid(material::AlphaMode::Blend),
+                double_sided: true,
+                pbr_metallic_roughness: material::PbrMetallicRoughness {
+                    base_color_factor: material::PbrBaseColorFactor([0.32, 0.46, 0.7, 0.6]),
+                    base_color_texture: None,
+                    metallic_factor: material::StrengthFactor(0.5),
+                    roughness_factor: material::StrengthFactor(0.5),
+                    metallic_roughness_texture: None,
+                    extensions: None,
+                    extras: Default::default(),
+                },
+                normal_texture: None,
+                occlusion_texture: None,
+                emissive_texture: None,
+                emissive_factor: material::EmissiveFactor([0.0, 0.0, 0.0]),
+                extensions: None,
+                extras: Default::default(),
+            });
+        }
+
         for block_objects in block.ifo.objects.iter() {
             deco.load_object(
                 "deco",
@@ -572,6 +599,73 @@ pub fn load_zone(
                 weights: None,
             });
             root.scenes[0].nodes.push(node_index);
+        }
+
+        for (ocean_index, ocean) in block.ifo.oceans.iter().enumerate() {
+            for (patch_index, patch) in ocean.patches.iter().enumerate() {
+                let start = Vec3::new(patch.start.x, patch.start.y, patch.start.z) / 100.0;
+                let end = (Vec3::new(patch.end.x, patch.end.y, patch.end.z) / 100.0) - start;
+                let up = Vec3::new(0.0, 1.0, 0.0);
+
+                let mut mesh_builder = MeshBuilder::new();
+                mesh_builder.add_positions(vec![
+                    Vec3::new(0.0, 0.0, end.z),
+                    Vec3::new(0.0, 0.0, 0.0),
+                    Vec3::new(end.x, 0.0, 0.0),
+                    Vec3::new(end.x, 0.0, end.z),
+                ]);
+                mesh_builder.add_normals(vec![up, up, up, up]);
+                mesh_builder.add_indices(vec![0, 2, 1, 0, 3, 2]);
+                let mesh_data = mesh_builder.build(
+                    root,
+                    binary_data,
+                    &format!(
+                        "{}_{}_ocean_{}_{}_mesh",
+                        block.block_x, block.block_y, ocean_index, patch_index
+                    ),
+                );
+
+                let mesh_index = Index::new(root.meshes.len() as u32);
+                root.meshes.push(mesh::Mesh {
+                    name: Some(format!(
+                        "{}_{}_ocean_{}_{}_mesh",
+                        block.block_x, block.block_y, ocean_index, patch_index
+                    )),
+                    extensions: Default::default(),
+                    extras: Default::default(),
+                    primitives: vec![mesh::Primitive {
+                        attributes: mesh_data.attributes.clone(),
+                        extensions: Default::default(),
+                        extras: Default::default(),
+                        indices: Some(mesh_data.indices),
+                        material: ocean_material,
+                        mode: Checked::Valid(mesh::Mode::Triangles),
+                        targets: None,
+                    }],
+                    weights: None,
+                });
+
+                // Spawn a node for a object
+                let node_index = Index::new(root.nodes.len() as u32);
+                root.nodes.push(scene::Node {
+                    camera: None,
+                    children: None,
+                    extensions: Default::default(),
+                    extras: Default::default(),
+                    matrix: None,
+                    mesh: Some(mesh_index),
+                    name: Some(format!(
+                        "{}_{}_ocean_{}_{}",
+                        block.block_x, block.block_y, ocean_index, patch_index
+                    )),
+                    rotation: None,
+                    scale: Some([1.0, 1.0, 1.0]),
+                    translation: Some([start.x, start.y, start.z]),
+                    skin: None,
+                    weights: None,
+                });
+                root.scenes[0].nodes.push(node_index);
+            }
         }
 
         // Spawn all object nodes
