@@ -1,0 +1,40 @@
+name: Build
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --release
+    - name: Upload a Build Artifact
+      uses: actions/upload-artifact@master
+      with:
+        name: decaf-emu-windows
+        path: |
+          target/release/rose-gltf
+          target/release/gltf-rose
+          target/release/make-lit
+  ubuntu-build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --release
+    - name: Upload a Build Artifact
+      uses: actions/upload-artifact@master
+      with:
+        name: decaf-emu-linux
+        path: |
+          target/release/rose-gltf
+          target/release/gltf-rose
+          target/release/make-lit
