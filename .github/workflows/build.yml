@@ -1,0 +1,38 @@
+name: Build
+
+on: [push, pull_request]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows-build:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --release
+    - name: Upload a Build Artifact
+      uses: actions/upload-artifact@master
+      with:
+        name: rose-gltf-windows
+        path: |
+          target/release/rose-gltf.exe
+          target/release/gltf-rose.exe
+          target/release/make-lit.exe
+  ubuntu-build:
+    name: Linux
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --release
+    - name: Upload a Build Artifact
+      uses: actions/upload-artifact@master
+      with:
+        name: rose-gltf-linux
+        path: |
+          target/release/rose-gltf
+          target/release/gltf-rose
+          target/release/make-lit
