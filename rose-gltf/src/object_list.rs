@@ -1,7 +1,11 @@
 use std::{collections::HashMap, io::Cursor, path::Path};
 
 use bytes::{BufMut, BytesMut};
-use gltf_json::{buffer, material, texture, validation::Checked, Index};
+use gltf_json::{
+    buffer, material, texture,
+    validation::{Checked, USize64},
+    Index,
+};
 use roselib::{
     files::{ZMS, ZSC},
     io::RoseFile,
@@ -112,8 +116,8 @@ impl ObjectList {
                 name_prefix, material_id
             )),
             buffer: Index::new(0),
-            byte_length: png_buffer.len() as u32,
-            byte_offset: Some(texture_data_start as u32),
+            byte_length: USize64::from(png_buffer.len()),
+            byte_offset: Some(USize64::from(texture_data_start)),
             byte_stride: None,
             extensions: Default::default(),
             extras: Default::default(),

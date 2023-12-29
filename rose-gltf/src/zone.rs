@@ -3,22 +3,17 @@ use std::{io::Cursor, path::PathBuf};
 use bytes::{BufMut, BytesMut};
 use glam::{EulerRot, Quat, Vec2, Vec3};
 use gltf_json::{
-    buffer,
-    extensions::{
-        self,
-        scene::khr_lights_punctual::{KhrLightsPunctual, Light},
-    },
-    material, mesh,
+    buffer, extensions, material, mesh,
     scene::{self, UnitQuaternion},
     texture,
-    validation::Checked,
+    validation::{Checked, USize64},
     Index,
 };
 use roselib::{
     files::{him::Heightmap, ifo::MapData, til::Tilemap, zon, HIM, IFO, TIL},
     io::RoseFile,
 };
-use serde_json::{json, value::RawValue};
+use serde_json::value::RawValue;
 
 use crate::{
     mesh_builder::{MeshBuilder, MeshData},
@@ -232,8 +227,8 @@ fn generate_terrain_materials(
                 block.block_x, block.block_y,
             )),
             buffer: Index::new(0),
-            byte_length: texture_data_length,
-            byte_offset: Some(texture_data_start),
+            byte_length: USize64::from(texture_data_length as usize),
+            byte_offset: Some(USize64::from(texture_data_start as usize)),
             byte_stride: None,
             extensions: Default::default(),
             extras: Default::default(),
@@ -406,6 +401,7 @@ fn generate_terrain_mesh(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn load_zone(
     root: &mut gltf_json::Root,
     binary_data: &mut BytesMut,
@@ -422,7 +418,7 @@ pub fn load_zone(
     root.extensions_used.push("KHR_lights_punctual".to_string());
     root.extensions = Some(extensions::Root {
         khr_lights_punctual: Some(extensions::root::KhrLightsPunctual {
-            lights: vec![Light {
+            lights: vec![extensions::scene::khr_lights_punctual::Light {
                 name: Some("the_sun".to_string()),
                 color: [0.88, 0.87, 0.84],
                 intensity: 4098.0,
