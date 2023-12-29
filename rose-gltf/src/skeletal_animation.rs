@@ -4,7 +4,10 @@ use roselib::files::{zmo, ZMD, ZMO};
 use serde_json::json;
 
 use gltf_json::{
-    accessor, animation, buffer, scene::UnitQuaternion, validation::Checked, Index, Node, Skin,
+    accessor, animation, buffer,
+    scene::UnitQuaternion,
+    validation::{Checked, USize64},
+    Index, Node, Skin,
 };
 
 use crate::pad_align;
@@ -89,20 +92,20 @@ pub fn load_skeleton(
     transform_children(zmd, &mut bind_pose, 0);
     let inverse_bind_pose: Vec<Mat4> = bind_pose.iter().map(|x| x.inverse()).collect();
 
-    let skeleton_data_start = binary_data.len() as u32;
+    let skeleton_data_start = binary_data.len();
     for mtx in inverse_bind_pose.iter() {
         for f in mtx.to_cols_array() {
             binary_data.put_f32_le(f);
         }
     }
-    let skeleton_data_length = binary_data.len() as u32 - skeleton_data_start;
+    let skeleton_data_length = binary_data.len() - skeleton_data_start;
 
     let buffer_view_index = root.buffer_views.len() as u32;
     root.buffer_views.push(buffer::View {
         name: Some(format!("{}_SkeletonBufferView", name)),
         buffer: Index::new(0),
-        byte_length: skeleton_data_length,
-        byte_offset: Some(skeleton_data_start),
+        byte_length: USize64::from(skeleton_data_length),
+        byte_offset: Some(USize64::from(skeleton_data_start)),
         byte_stride: None,
         extensions: Default::default(),
         extras: Default::default(),
@@ -113,8 +116,8 @@ pub fn load_skeleton(
     root.accessors.push(accessor::Accessor {
         name: Some(format!("{}_SkeletonAccessor", name)),
         buffer_view: Some(Index::new(buffer_view_index)),
-        byte_offset: Some(0),
-        count: inverse_bind_pose.len() as u32,
+        byte_offset: Some(USize64(0)),
+        count: USize64::from(inverse_bind_pose.len()),
         component_type: Checked::Valid(accessor::GenericComponentType(
             accessor::ComponentType::F32,
         )),
@@ -151,19 +154,19 @@ pub fn load_skeletal_animation(
 
     pad_align(binary_data);
 
-    let keyframe_time_start = binary_data.len() as u32;
+    let keyframe_time_start = binary_data.len();
     let fps = zmo.fps as f32;
     for i in 0..zmo.frames {
         binary_data.put_f32_le(i as f32 / fps)
     }
-    let keyframe_time_length = binary_data.len() as u32 - keyframe_time_start;
+    let keyframe_time_length = binary_data.len() - keyframe_time_start;
 
     let buffer_view_index = root.buffer_views.len() as u32;
     root.buffer_views.push(buffer::View {
         name: Some(format!("{}_KeyframeTimesBuferView", name)),
         buffer: Index::new(0),
-        byte_length: keyframe_time_length,
-        byte_offset: Some(keyframe_time_start),
+        byte_length: USize64::from(keyframe_time_length),
+        byte_offset: Some(USize64::from(keyframe_time_start)),
         byte_stride: None,
         extensions: Default::default(),
         extras: Default::default(),
@@ -174,8 +177,8 @@ pub fn load_skeletal_animation(
     root.accessors.push(accessor::Accessor {
         name: Some(format!("{}_KeyframeTimesAccessor", name)),
         buffer_view: Some(Index::new(buffer_view_index)),
-        byte_offset: Some(0),
-        count: zmo.frames,
+        byte_offset: Some(USize64(0)),
+        count: USize64::from(zmo.frames as usize),
         component_type: Checked::Valid(accessor::GenericComponentType(
             accessor::ComponentType::F32,
         )),
@@ -196,7 +199,7 @@ pub fn load_skeletal_animation(
             continue;
         }
 
-        let keyframe_data_start = binary_data.len() as u32;
+        let keyframe_data_start = binary_data.len();
         match &channel.frames {
             zmo::ChannelData::Position(positions) => {
                 for position in positions.iter() {
@@ -222,14 +225,14 @@ pub fn load_skeletal_animation(
             }
             _ => unreachable!(),
         };
-        let keyframe_data_length = binary_data.len() as u32 - keyframe_data_start;
+        let keyframe_data_length = binary_data.len() - keyframe_data_start;
 
         let buffer_view_index = root.buffer_views.len() as u32;
         root.buffer_views.push(buffer::View {
             name: Some(format!("{}_Channel{}_DataBufferView", name, channel_id)),
             buffer: Index::new(0),
-            byte_length: keyframe_data_length,
-            byte_offset: Some(keyframe_data_start),
+            byte_length: USize64::from(keyframe_data_length),
+            byte_offset: Some(USize64::from(keyframe_data_start)),
             byte_stride: None,
             extensions: Default::default(),
             extras: Default::default(),
@@ -240,8 +243,8 @@ pub fn load_skeletal_animation(
         root.accessors.push(accessor::Accessor {
             name: Some(format!("{}_Channel{}_DataAccessor", name, channel_id)),
             buffer_view: Some(Index::new(buffer_view_index)),
-            byte_offset: Some(0),
-            count: zmo.frames,
+            byte_offset: Some(USize64(0)),
+            count: USize64::from(zmo.frames as usize),
             component_type: Checked::Valid(accessor::GenericComponentType(
                 accessor::ComponentType::F32,
             )),

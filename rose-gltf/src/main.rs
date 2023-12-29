@@ -6,7 +6,11 @@ use std::{
 
 use bytes::{BufMut, BytesMut};
 use clap::Parser;
-use gltf_json::{buffer, scene, texture, validation::Checked, Index};
+use gltf_json::{
+    buffer, scene, texture,
+    validation::{Checked, USize64},
+    Index,
+};
 use roselib::{
     files::{STB, ZMD, ZMO, ZMS, ZON, ZSC},
     io::RoseFile,
@@ -233,7 +237,7 @@ fn main() {
     pad_align(&mut binary_data);
     root.buffers.push(buffer::Buffer {
         name: None,
-        byte_length: binary_data.len() as u32,
+        byte_length: USize64::from(binary_data.len()),
         extensions: Default::default(),
         extras: Default::default(),
         uri: None,
