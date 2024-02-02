@@ -6,6 +6,7 @@ use gltf_json::{
     validation::{Checked, USize64},
     Index,
 };
+use image::{DynamicImage, ImageBuffer, Rgba};
 use roselib::{
     files::{ZMS, ZSC},
     io::RoseFile,
@@ -96,7 +97,13 @@ impl ObjectList {
         }
 
         let material = self.zsc.materials.get(material_id as usize).unwrap();
-        let img = image::open(assets_path.join(&material.path)).expect("Failed to load DDS");
+        let img = match image::open(assets_path.join(&material.path)) {
+            Ok(img) => img,
+            Err(error) => {
+                println!("Failed to read {} with error {}", material.path.to_string_lossy(), error);
+                DynamicImage::ImageRgba8(ImageBuffer::from_pixel(4, 4, Rgba([255u8, 1u8, 255u8, 0u8])))
+            }
+        };
         let mut png_buffer: Vec<u8> = Vec::new();
         img.write_to(
             &mut Cursor::new(&mut png_buffer),
