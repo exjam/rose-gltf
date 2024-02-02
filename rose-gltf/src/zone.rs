@@ -1,4 +1,7 @@
-use std::{io::Cursor, path::PathBuf};
+use std::{
+    io::Cursor,
+    path::{Path, PathBuf},
+};
 
 use bytes::{BufMut, BytesMut};
 use glam::{EulerRot, Quat, Vec2, Vec3};
@@ -10,7 +13,7 @@ use gltf_json::{
     Index,
 };
 use roselib::{
-    files::{him::Heightmap, ifo::MapData, til::Tilemap, zon, HIM, IFO, TIL},
+    files::{him::Heightmap, ifo::MapData, til::Tilemap, zon, HIM, IFO, TIL, ZMO},
     io::RoseFile,
 };
 use serde_json::value::RawValue;
@@ -33,6 +36,10 @@ fn convert_position(position: roselib::utils::Vector3<f32>) -> [f32; 3] {
     [position.x / 100.0, position.z / 100.0, -position.y / 100.0]
 }
 
+fn convert_scale(scale: roselib::utils::Vector3<f32>) -> [f32; 3] {
+    [scale.x, scale.z, scale.y]
+}
+
 fn convert_rotation(rotation: roselib::utils::Quaternion) -> UnitQuaternion {
     UnitQuaternion([rotation.x, rotation.z, -rotation.y, rotation.w])
 }
@@ -41,7 +48,7 @@ fn generate_terrain_materials(
     root: &mut gltf_json::Root,
     binary_data: &mut BytesMut,
     zon: &zon::Zone,
-    assets_path: PathBuf,
+    assets_path: &Path,
     blocks: &[BlockData],
 ) -> Vec<Index<material::Material>> {
     let texture_size = 1024;
@@ -535,194 +542,267 @@ pub fn load_zone(
     }
 
     let block_terrain_materials =
-        generate_terrain_materials(root, binary_data, zon, assets_path, &blocks);
+        generate_terrain_materials(root, binary_data, zon, &assets_path, &blocks);
 
     // Spawn all block nodes
     for (block, block_terrain_material) in blocks.iter().zip(block_terrain_materials.iter()) {
-        // Create heightmap mesh
-        {
-            let mesh_data =
-                generate_terrain_mesh(root, binary_data, block, use_better_heightmap_triangles);
+        // Load heightmap
+        load_heightmap(
+            root,
+            binary_data,
+            block,
+            use_better_heightmap_triangles,
+            block_terrain_material,
+        );
 
-            let heightmap_mesh = Index::new(root.meshes.len() as u32);
-            root.meshes.push(mesh::Mesh {
-                name: Some(format!(
-                    "{}_{}_heightmap_mesh",
-                    block.block_x, block.block_y
-                )),
-                extensions: Default::default(),
-                extras: Default::default(),
-                primitives: vec![mesh::Primitive {
-                    attributes: mesh_data.attributes,
-                    extensions: Default::default(),
-                    extras: Default::default(),
-                    indices: Some(mesh_data.indices),
-                    material: Some(*block_terrain_material),
-                    mode: Checked::Valid(mesh::Mode::Triangles),
-                    targets: None,
-                }],
-                weights: None,
-            });
-
-            let offset_x = (160.0 * block.block_x as f32) - 5200.0;
-            let offset_y = (160.0 * (65.0 - block.block_y as f32)) - 5200.0;
-            let node_index = Index::new(root.nodes.len() as u32);
-            root.nodes.push(scene::Node {
-                camera: None,
-                children: None,
-                extensions: Default::default(),
-                extras: Some(
-                    RawValue::from_string(format!(
-                        r#"{{
-                    "TLM_ObjectProperties": {{
-                        "tlm_mesh_lightmap_use": 1,
-                        "tlm_mesh_lightmap_resolution": {},
-                        "tlm_use_default_channel": 0,
-                        "tlm_uv_channel": "UVMap.001"
-                    }}
-                }}"#,
-                        4
-                    ))
-                    .unwrap(),
-                ),
-                matrix: None,
-                mesh: Some(heightmap_mesh),
-                name: Some(format!("{}_{}_heightmap", block.block_x, block.block_y,)),
-                rotation: Some(UnitQuaternion::default()),
-                scale: Some([1.0, 1.0, 1.0]),
-                translation: Some([offset_x, 0.0, -offset_y]),
-                skin: None,
-                weights: None,
-            });
-            root.scenes[0].nodes.push(node_index);
-        }
-
+        // Load ocean patch
         for (ocean_index, ocean) in block.ifo.oceans.iter().enumerate() {
             for (patch_index, patch) in ocean.patches.iter().enumerate() {
-                let start = Vec3::new(patch.start.x, patch.start.y, patch.start.z) / 100.0;
-                let end = (Vec3::new(patch.end.x, patch.end.y, patch.end.z) / 100.0) - start;
-                let up = Vec3::new(0.0, 1.0, 0.0);
-
-                let mut mesh_builder = MeshBuilder::new();
-                mesh_builder.add_positions(vec![
-                    Vec3::new(0.0, 0.0, end.z),
-                    Vec3::new(0.0, 0.0, 0.0),
-                    Vec3::new(end.x, 0.0, 0.0),
-                    Vec3::new(end.x, 0.0, end.z),
-                ]);
-                mesh_builder.add_normals(vec![up, up, up, up]);
-                mesh_builder.add_indices(vec![0, 2, 1, 0, 3, 2]);
-                let mesh_data = mesh_builder.build(
+                load_ocean_patch(
                     root,
                     binary_data,
-                    &format!(
-                        "{}_{}_ocean_{}_{}_mesh",
-                        block.block_x, block.block_y, ocean_index, patch_index
-                    ),
+                    block,
+                    ocean_index,
+                    patch_index,
+                    patch,
+                    ocean_material,
                 );
-
-                let mesh_index = Index::new(root.meshes.len() as u32);
-                root.meshes.push(mesh::Mesh {
-                    name: Some(format!(
-                        "{}_{}_ocean_{}_{}_mesh",
-                        block.block_x, block.block_y, ocean_index, patch_index
-                    )),
-                    extensions: Default::default(),
-                    extras: Default::default(),
-                    primitives: vec![mesh::Primitive {
-                        attributes: mesh_data.attributes.clone(),
-                        extensions: Default::default(),
-                        extras: Default::default(),
-                        indices: Some(mesh_data.indices),
-                        material: ocean_material,
-                        mode: Checked::Valid(mesh::Mode::Triangles),
-                        targets: None,
-                    }],
-                    weights: None,
-                });
-
-                // Spawn a node for a object
-                let node_index = Index::new(root.nodes.len() as u32);
-                root.nodes.push(scene::Node {
-                    camera: None,
-                    children: None,
-                    extensions: Default::default(),
-                    extras: Default::default(),
-                    matrix: None,
-                    mesh: Some(mesh_index),
-                    name: Some(format!(
-                        "{}_{}_ocean_{}_{}",
-                        block.block_x, block.block_y, ocean_index, patch_index
-                    )),
-                    rotation: None,
-                    scale: Some([1.0, 1.0, 1.0]),
-                    translation: Some([start.x, start.y, start.z]),
-                    skin: None,
-                    weights: None,
-                });
-                root.scenes[0].nodes.push(node_index);
             }
         }
 
-        // Spawn all object nodes
+        // Load all deco objects
         for (object_instance_index, object_instance) in block.ifo.objects.iter().enumerate() {
-            let mut children = Vec::new();
-            let object_id = object_instance.object_id as usize;
-            let object = &deco.zsc.objects[object_id];
-            let object_scale =
-                (object_instance.scale.x + object_instance.scale.y + object_instance.scale.z) / 3.0;
+            load_object_instance(
+                root,
+                binary_data,
+                &assets_path,
+                block,
+                deco,
+                "deco",
+                object_instance_index,
+                object_instance,
+            );
+        }
 
-            // Spawn a node for each object part
-            for (part_index, part) in object.parts.iter().enumerate() {
-                let mesh_data = deco.meshes.get(&part.mesh_id).expect("Missing mesh");
-                let mesh_index = root.meshes.len() as u32;
-                root.meshes.push(mesh::Mesh {
-                    name: Some(format!(
-                        "{}_{}_deco_{}_{}_mesh",
-                        block.block_x, block.block_y, object_instance_index, part_index
-                    )),
-                    extensions: Default::default(),
-                    extras: Default::default(),
-                    primitives: vec![mesh::Primitive {
-                        attributes: mesh_data.attributes.clone(),
-                        extensions: Default::default(),
-                        extras: Default::default(),
-                        indices: Some(mesh_data.indices),
-                        material: deco.materials.get(&part.material_id).copied(),
-                        mode: Checked::Valid(mesh::Mode::Triangles),
-                        targets: None,
-                    }],
-                    weights: None,
-                });
+        // Load all cnst objects
+        for (object_instance_index, object_instance) in block.ifo.buildings.iter().enumerate() {
+            load_object_instance(
+                root,
+                binary_data,
+                &assets_path,
+                block,
+                cnst,
+                "cnst",
+                object_instance_index,
+                object_instance,
+            );
+        }
+    }
+}
 
-                // These variable names are from the original 3ds max import script.
-                let part_scale = object_scale * (part.scale.x + part.scale.y + part.scale.z) / 3.0;
-                let true_face_area = mesh_data.surface_area;
-                let many_face_avt = (mesh_data.num_faces as f32) / 5000.0;
-                let auto_rtt_map_size =
-                    (true_face_area + true_face_area * many_face_avt) * part_scale;
-                let lightmap_size = if auto_rtt_map_size > 2500.0 {
-                    3 // 256
-                } else if auto_rtt_map_size > 150.0 {
-                    2 // 128
-                } else if auto_rtt_map_size > 11.0 {
-                    1 // 64
-                } else {
-                    0 // 32
-                };
+fn load_ocean_patch(
+    root: &mut gltf_json::Root,
+    binary_data: &mut BytesMut,
+    block: &BlockData,
+    ocean_index: usize,
+    patch_index: usize,
+    patch: &roselib::files::ifo::OceanPatch,
+    ocean_material: Option<Index<gltf_json::Material>>,
+) {
+    let start = Vec3::new(patch.start.x, patch.start.y, -patch.start.z) / 100.0;
+    let end = (Vec3::new(patch.end.x, patch.end.y, -patch.end.z) / 100.0) - start;
+    let up = Vec3::new(0.0, 1.0, 0.0);
 
-                let node_index = Index::new(root.nodes.len() as u32);
-                root.nodes.push(scene::Node {
-                    name: Some(format!(
-                        "{}_{}_deco_{}_{}_",
-                        block.block_x, block.block_y, object_instance_index, part_index
-                    )),
-                    camera: None,
-                    children: None,
-                    extensions: Default::default(),
-                    extras: Some(
-                        RawValue::from_string(format!(
-                            r#"{{
+    let mut mesh_builder = MeshBuilder::new();
+    mesh_builder.add_positions(vec![
+        Vec3::new(0.0, 0.0, end.z),
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(end.x, 0.0, 0.0),
+        Vec3::new(end.x, 0.0, end.z),
+    ]);
+    mesh_builder.add_normals(vec![up, up, up, up]);
+    mesh_builder.add_indices(vec![0, 2, 1, 0, 3, 2]);
+    let mesh_data = mesh_builder.build(
+        root,
+        binary_data,
+        &format!(
+            "{}_{}_ocean_{}_{}_mesh",
+            block.block_x, block.block_y, ocean_index, patch_index
+        ),
+    );
+
+    let mesh_index = Index::new(root.meshes.len() as u32);
+    root.meshes.push(mesh::Mesh {
+        name: Some(format!(
+            "{}_{}_ocean_{}_{}_mesh",
+            block.block_x, block.block_y, ocean_index, patch_index
+        )),
+        extensions: Default::default(),
+        extras: Default::default(),
+        primitives: vec![mesh::Primitive {
+            attributes: mesh_data.attributes.clone(),
+            extensions: Default::default(),
+            extras: Default::default(),
+            indices: Some(mesh_data.indices),
+            material: ocean_material,
+            mode: Checked::Valid(mesh::Mode::Triangles),
+            targets: None,
+        }],
+        weights: None,
+    });
+
+    // Spawn a node for a object
+    let node_index = Index::new(root.nodes.len() as u32);
+    root.nodes.push(scene::Node {
+        camera: None,
+        children: None,
+        extensions: Default::default(),
+        extras: Default::default(),
+        matrix: None,
+        mesh: Some(mesh_index),
+        name: Some(format!(
+            "{}_{}_ocean_{}_{}",
+            block.block_x, block.block_y, ocean_index, patch_index
+        )),
+        rotation: None,
+        scale: Some([1.0, 1.0, 1.0]),
+        translation: Some([start.x, start.y, start.z]),
+        skin: None,
+        weights: None,
+    });
+    root.scenes[0].nodes.push(node_index);
+}
+
+fn load_heightmap(
+    root: &mut gltf_json::Root,
+    binary_data: &mut BytesMut,
+    block: &BlockData,
+    use_better_heightmap_triangles: bool,
+    block_terrain_material: &Index<gltf_json::Material>,
+) {
+    let mesh_data = generate_terrain_mesh(root, binary_data, block, use_better_heightmap_triangles);
+
+    let heightmap_mesh = Index::new(root.meshes.len() as u32);
+    root.meshes.push(mesh::Mesh {
+        name: Some(format!(
+            "{}_{}_heightmap_mesh",
+            block.block_x, block.block_y
+        )),
+        extensions: Default::default(),
+        extras: Default::default(),
+        primitives: vec![mesh::Primitive {
+            attributes: mesh_data.attributes,
+            extensions: Default::default(),
+            extras: Default::default(),
+            indices: Some(mesh_data.indices),
+            material: Some(*block_terrain_material),
+            mode: Checked::Valid(mesh::Mode::Triangles),
+            targets: None,
+        }],
+        weights: None,
+    });
+
+    let offset_x = (160.0 * block.block_x as f32) - 5200.0;
+    let offset_y = (160.0 * (65.0 - block.block_y as f32)) - 5200.0;
+    let node_index = Index::new(root.nodes.len() as u32);
+    root.nodes.push(scene::Node {
+        camera: None,
+        children: None,
+        extensions: Default::default(),
+        extras: Some(
+            RawValue::from_string(format!(
+                r#"{{
+                "TLM_ObjectProperties": {{
+                    "tlm_mesh_lightmap_use": 1,
+                    "tlm_mesh_lightmap_resolution": {},
+                    "tlm_use_default_channel": 0,
+                    "tlm_uv_channel": "UVMap.001"
+                }}
+            }}"#,
+                4
+            ))
+            .unwrap(),
+        ),
+        matrix: None,
+        mesh: Some(heightmap_mesh),
+        name: Some(format!("{}_{}_heightmap", block.block_x, block.block_y,)),
+        rotation: Some(UnitQuaternion::default()),
+        scale: Some([1.0, 1.0, 1.0]),
+        translation: Some([offset_x, 0.0, -offset_y]),
+        skin: None,
+        weights: None,
+    });
+    root.scenes[0].nodes.push(node_index);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn load_object_instance(
+    root: &mut gltf_json::Root,
+    binary_data: &mut BytesMut,
+    assets_path: &Path,
+    block: &BlockData,
+    object_list: &ObjectList,
+    object_list_name: &str,
+    object_instance_index: usize,
+    object_instance: &roselib::files::ifo::ObjectData,
+) {
+    let mut children = Vec::new();
+    let object_id = object_instance.object_id as usize;
+    let object = &object_list.zsc.objects[object_id];
+    let object_average_scale =
+        (object_instance.scale.x + object_instance.scale.y + object_instance.scale.z) / 3.0;
+
+    // Spawn a node for each object part
+    for (part_index, part) in object.parts.iter().enumerate() {
+        let mesh_data = object_list.meshes.get(&part.mesh_id).expect("Missing mesh");
+        let mesh_index = root.meshes.len() as u32;
+        root.meshes.push(mesh::Mesh {
+            name: Some(format!(
+                "{}_{}_{}_{}_{}_mesh",
+                block.block_x, block.block_y, object_list_name, object_instance_index, part_index
+            )),
+            extensions: Default::default(),
+            extras: Default::default(),
+            primitives: vec![mesh::Primitive {
+                attributes: mesh_data.attributes.clone(),
+                extensions: Default::default(),
+                extras: Default::default(),
+                indices: Some(mesh_data.indices),
+                material: object_list.materials.get(&part.material_id).copied(),
+                mode: Checked::Valid(mesh::Mode::Triangles),
+                targets: None,
+            }],
+            weights: None,
+        });
+
+        // These variable names are from the original 3ds max import script.
+        let part_scale = object_average_scale * (part.scale.x + part.scale.y + part.scale.z) / 3.0;
+        let true_face_area = mesh_data.surface_area;
+        let many_face_avt = (mesh_data.num_faces as f32) / 5000.0;
+        let auto_rtt_map_size = (true_face_area + true_face_area * many_face_avt) * part_scale;
+        let lightmap_size = if auto_rtt_map_size > 2500.0 {
+            3 // 256
+        } else if auto_rtt_map_size > 150.0 {
+            2 // 128
+        } else if auto_rtt_map_size > 11.0 {
+            1 // 64
+        } else {
+            0 // 32
+        };
+
+        let node_index = Index::new(root.nodes.len() as u32);
+        children.push(node_index);
+        root.nodes.push(scene::Node {
+            name: Some(format!(
+                "{}_{}_{}_{}_{}",
+                block.block_x, block.block_y, object_list_name, object_instance_index, part_index
+            )),
+            camera: None,
+            children: None,
+            extensions: Default::default(),
+            extras: Some(
+                RawValue::from_string(format!(
+                    r#"{{
                         "TLM_ObjectProperties": {{
                             "tlm_mesh_lightmap_use": 1,
                             "tlm_mesh_lightmap_resolution": {},
@@ -730,151 +810,43 @@ pub fn load_zone(
                             "tlm_uv_channel": "UVMap.001"
                         }}
                     }}"#,
-                            lightmap_size
-                        ))
-                        .unwrap(),
-                    ),
-                    matrix: None,
-                    mesh: Some(Index::new(mesh_index)),
-                    rotation: Some(convert_rotation(part.rotation)),
-                    scale: Some([part.scale.x, part.scale.y, part.scale.z]),
-                    translation: Some(convert_position(part.position)),
-                    skin: None,
-                    weights: None,
-                });
-                children.push(node_index);
-            }
+                    lightmap_size
+                ))
+                .unwrap(),
+            ),
+            matrix: None,
+            mesh: Some(Index::new(mesh_index)),
+            rotation: Some(convert_rotation(part.rotation)),
+            scale: Some(convert_scale(part.scale)),
+            translation: Some(convert_position(part.position)),
+            skin: None,
+            weights: None,
+        });
 
-            // Spawn a node for a object
-            let node_index = Index::new(root.nodes.len() as u32);
-            root.nodes.push(scene::Node {
-                camera: None,
-                children: Some(children),
-                extensions: Default::default(),
-                extras: Default::default(),
-                matrix: None,
-                mesh: None,
-                name: Some(format!(
-                    "{}_{}_deco_{}",
-                    block.block_x, block.block_y, object_instance_index,
-                )),
-                rotation: Some(convert_rotation(object_instance.rotation)),
-                scale: Some([
-                    object_instance.scale.x,
-                    object_instance.scale.y,
-                    object_instance.scale.z,
-                ]),
-                translation: Some(convert_position(object_instance.position)),
-                skin: None,
-                weights: None,
-            });
-            root.scenes[0].nodes.push(node_index);
-        }
 
-        // Spawn a node for each building part
-        for (object_instance_index, object_instance) in block.ifo.buildings.iter().enumerate() {
-            let mut children = Vec::new();
-            let object_id = object_instance.object_id as usize;
-            let object = &cnst.zsc.objects[object_id];
-            let object_scale =
-                (object_instance.scale.x + object_instance.scale.y + object_instance.scale.z) / 3.0;
 
-            // Spawn a node for each object part
-            for (part_index, part) in object.parts.iter().enumerate() {
-                let mesh_data = cnst.meshes.get(&part.mesh_id).expect("Missing mesh");
-                let mesh_index = root.meshes.len() as u32;
-                root.meshes.push(mesh::Mesh {
-                    name: Some(format!(
-                        "{}_{}_cnst_{}_{}_mesh",
-                        block.block_x, block.block_y, object_instance_index, part_index
-                    )),
-                    extensions: Default::default(),
-                    extras: Default::default(),
-                    primitives: vec![mesh::Primitive {
-                        attributes: mesh_data.attributes.clone(),
-                        extensions: Default::default(),
-                        extras: Default::default(),
-                        indices: Some(mesh_data.indices),
-                        material: cnst.materials.get(&part.material_id).copied(),
-                        mode: Checked::Valid(mesh::Mode::Triangles),
-                        targets: None,
-                    }],
-                    weights: None,
-                });
 
-                // These variable names are from the original 3ds max import script.
-                let part_scale = object_scale * (part.scale.x + part.scale.y + part.scale.z) / 3.0;
-                let true_face_area = mesh_data.surface_area;
-                let many_face_avt = (mesh_data.num_faces as f32) / 5000.0;
-                let auto_rtt_map_size =
-                    (true_face_area + true_face_area * many_face_avt) * part_scale;
-                let lightmap_size = if auto_rtt_map_size > 2500.0 {
-                    3 // 256
-                } else if auto_rtt_map_size > 150.0 {
-                    2 // 128
-                } else if auto_rtt_map_size > 11.0 {
-                    1 // 64
-                } else {
-                    0 // 32
-                };
-
-                children.push(Index::new(root.nodes.len() as u32));
-                root.nodes.push(scene::Node {
-                    camera: None,
-                    children: None,
-                    extensions: Default::default(),
-                    extras: Some(
-                        RawValue::from_string(format!(
-                            r#"{{
-                                "TLM_ObjectProperties": {{
-                                    "tlm_mesh_lightmap_use": 1,
-                                    "tlm_mesh_lightmap_resolution": {},
-                                    "tlm_use_default_channel": 0,
-                                    "tlm_uv_channel": "UVMap.001"
-                                }}
-                            }}"#,
-                            lightmap_size
-                        ))
-                        .unwrap(),
-                    ),
-                    matrix: None,
-                    mesh: Some(Index::new(mesh_index)),
-                    name: Some(format!(
-                        "{}_{}_cnst_{}_{}",
-                        block.block_x, block.block_y, object_instance_index, part_index
-                    )),
-                    rotation: Some(convert_rotation(part.rotation)),
-                    scale: Some([part.scale.x, part.scale.y, part.scale.z]),
-                    translation: Some(convert_position(part.position)),
-                    skin: None,
-                    weights: None,
-                });
-            }
-
-            // Spawn a node for building object
-            let node_index = Index::new(root.nodes.len() as u32);
-            root.nodes.push(scene::Node {
-                camera: None,
-                children: Some(children),
-                extensions: Default::default(),
-                extras: Default::default(),
-                matrix: None,
-                mesh: None,
-                name: Some(format!(
-                    "{}_{}_cnst_{}",
-                    block.block_x, block.block_y, object_instance_index,
-                )),
-                rotation: Some(convert_rotation(object_instance.rotation)),
-                scale: Some([
-                    object_instance.scale.x,
-                    object_instance.scale.y,
-                    object_instance.scale.z,
-                ]),
-                translation: Some(convert_position(object_instance.position)),
-                skin: None,
-                weights: None,
-            });
-            root.scenes[0].nodes.push(node_index);
         }
     }
+
+    // Spawn a node for building object
+    let node_index = Index::new(root.nodes.len() as u32);
+    root.nodes.push(scene::Node {
+        name: Some(format!(
+            "{}_{}_{}_{}",
+            block.block_x, block.block_y, object_list_name, object_instance_index,
+        )),
+        camera: None,
+        children: Some(children),
+        extensions: Default::default(),
+        extras: Default::default(),
+        matrix: None,
+        mesh: None,
+        rotation: Some(convert_rotation(object_instance.rotation)),
+        scale: Some(convert_scale(object_instance.scale)),
+        translation: Some(convert_position(object_instance.position)),
+        skin: None,
+        weights: None,
+    });
+    root.scenes[0].nodes.push(node_index);
 }

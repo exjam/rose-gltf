@@ -100,8 +100,16 @@ impl ObjectList {
         let img = match image::open(assets_path.join(&material.path)) {
             Ok(img) => img,
             Err(error) => {
-                println!("Failed to read {} with error {}", material.path.to_string_lossy(), error);
-                DynamicImage::ImageRgba8(ImageBuffer::from_pixel(4, 4, Rgba([255u8, 1u8, 255u8, 0u8])))
+                println!(
+                    "Failed to read {} with error {}",
+                    material.path.to_string_lossy(),
+                    error
+                );
+                DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
+                    4,
+                    4,
+                    Rgba([255u8, 1u8, 255u8, 0u8]),
+                ))
             }
         };
         let mut png_buffer: Vec<u8> = Vec::new();
