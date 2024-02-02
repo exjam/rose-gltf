@@ -19,6 +19,7 @@ use roselib::{
 use serde_json::value::RawValue;
 
 use crate::{
+    animation::{load_animation, GetAnimationChannelNode},
     mesh_builder::{MeshBuilder, MeshData},
     object_list::ObjectList,
     pad_align,
@@ -823,9 +824,36 @@ fn load_object_instance(
             weights: None,
         });
 
+        if !part.animation_path.as_os_str().is_empty() {
+            let animation_path = assets_path.join(&part.animation_path);
+            if let Ok(zmo) = ZMO::from_path(&animation_path) {
+                let name = format!(
+                    "{}_{}_{}_{}_{}_anim",
+                    block.block_x,
+                    block.block_y,
+                    object_list_name,
+                    object_instance_index,
+                    part_index
+                );
 
+                impl GetAnimationChannelNode for Index<scene::Node> {
+                    fn get(
+                        &self,
+                        _root: &mut gltf_json::Root,
+                        channel: u32,
+                    ) -> Index<gltf_json::Node> {
+                        if channel != 0 {
+                            panic!("Unexpected animation channel {}", channel);
+                        }
 
+                        *self
+                    }
+                }
 
+                load_animation(root, binary_data, &zmo, &name, node_index);
+            } else {
+                println!("Failed to load {}", animation_path.to_string_lossy());
+            }
         }
     }
 

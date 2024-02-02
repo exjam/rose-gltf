@@ -24,6 +24,7 @@ mod mesh_builder;
 mod mesh;
 use mesh::load_mesh;
 
+mod animation;
 mod skeletal_animation;
 use serde_json::value::RawValue;
 use skeletal_animation::{load_skeletal_animation, load_skeleton};
