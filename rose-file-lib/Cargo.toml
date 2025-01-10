@@ -1,0 +1,26 @@
+[package]
+name = "rose-file-lib"
+version = { workspace = true }
+edition = { workspace = true }
+authors = { workspace = true }
+
+[dependencies]
+arrayvec = { workspace = true }
+bitflags = { workspace = true }
+blake3 = { workspace = true }
+byteorder = { workspace = true }
+encoding_rs = { workspace = true }
+enum-map = { workspace = true }
+human-sort = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+num-derive = { workspace = true }
+num-traits = { workspace = true }
+
+[dev-dependencies]
+time = { workspace = true }
+pretty_assertions = { workspace = true }
+
+[profile.dev.package.diff]
+# Improve performance of pretty_assertions diffs
+opt-level = 3

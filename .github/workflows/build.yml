@@ -19,7 +19,6 @@ jobs:
         name: rose-gltf-windows
         path: |
           target/release/rose-gltf.exe
-          target/release/gltf-rose.exe
           target/release/make-lit.exe
   ubuntu-build:
     name: Linux
@@ -34,5 +33,4 @@ jobs:
         name: rose-gltf-linux
         path: |
           target/release/rose-gltf
-          target/release/gltf-rose
           target/release/make-lit

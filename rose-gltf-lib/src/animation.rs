@@ -1,5 +1,5 @@
 use bytes::{BufMut, BytesMut};
-use roselib::files::{zmo, ZMO};
+use rose_file_lib::files::{zmo, ZMO};
 use serde_json::json;
 
 use gltf_json::{

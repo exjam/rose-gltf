@@ -3,6 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use anyhow::Context;
 use bytes::{BufMut, BytesMut};
 use glam::{EulerRot, Quat, Vec2, Vec3};
 use gltf_json::{
@@ -12,7 +13,7 @@ use gltf_json::{
     validation::{Checked, USize64},
     Index,
 };
-use roselib::{
+use rose_file_lib::{
     files::{him::Heightmap, ifo::MapData, til::Tilemap, zon, HIM, IFO, TIL, ZMO},
     io::RoseFile,
 };
@@ -33,15 +34,15 @@ struct BlockData {
     pub til: Tilemap,
 }
 
-fn convert_position(position: roselib::utils::Vector3<f32>) -> [f32; 3] {
+fn convert_position(position: rose_file_lib::utils::Vector3<f32>) -> [f32; 3] {
     [position.x / 100.0, position.z / 100.0, -position.y / 100.0]
 }
 
-fn convert_scale(scale: roselib::utils::Vector3<f32>) -> [f32; 3] {
+fn convert_scale(scale: rose_file_lib::utils::Vector3<f32>) -> [f32; 3] {
     [scale.x, scale.z, scale.y]
 }
 
-fn convert_rotation(rotation: roselib::utils::Quaternion) -> UnitQuaternion {
+fn convert_rotation(rotation: rose_file_lib::utils::Quaternion) -> UnitQuaternion {
     UnitQuaternion([rotation.x, rotation.z, -rotation.y, rotation.w])
 }
 
@@ -216,7 +217,7 @@ fn generate_terrain_materials(
         let (texture_data_start, texture_data_length) = {
             let mut buffer: Vec<u8> = Vec::new();
             image
-                .write_to(&mut Cursor::new(&mut buffer), image::ImageOutputFormat::Png)
+                .write_to(&mut Cursor::new(&mut buffer), image::ImageFormat::Png)
                 .expect("Failed to write PNG");
             pad_align(binary_data);
             let texture_data_start = binary_data.len() as u32;
@@ -421,7 +422,7 @@ pub fn load_zone(
     use_better_heightmap_triangles: bool,
     filter_block_x: Option<i32>,
     filter_block_y: Option<i32>,
-) {
+) -> anyhow::Result<()> {
     // Add a directional light to the scene
     root.extensions_used.push("KHR_lights_punctual".to_string());
     root.extensions = Some(extensions::Root {
@@ -528,7 +529,8 @@ pub fn load_zone(
                 root,
                 binary_data,
                 &assets_path,
-            );
+            )
+            .context("Failed to load deco object")?;
         }
 
         for block_objects in block.ifo.buildings.iter() {
@@ -538,7 +540,8 @@ pub fn load_zone(
                 root,
                 binary_data,
                 &assets_path,
-            );
+            )
+            .context("Failed to load deco object")?;
         }
     }
 
@@ -599,6 +602,8 @@ pub fn load_zone(
             );
         }
     }
+
+    Ok(())
 }
 
 fn load_ocean_patch(
@@ -607,7 +612,7 @@ fn load_ocean_patch(
     block: &BlockData,
     ocean_index: usize,
     patch_index: usize,
-    patch: &roselib::files::ifo::OceanPatch,
+    patch: &rose_file_lib::files::ifo::OceanPatch,
     ocean_material: Option<Index<gltf_json::Material>>,
 ) {
     let start = Vec3::new(patch.start.x, patch.start.y, -patch.start.z) / 100.0;
@@ -736,6 +741,16 @@ fn load_heightmap(
     root.scenes[0].nodes.push(node_index);
 }
 
+impl GetAnimationChannelNode for Index<scene::Node> {
+    fn get(&self, _root: &mut gltf_json::Root, channel: u32) -> Index<gltf_json::Node> {
+        if channel != 0 {
+            panic!("Unexpected animation channel {}", channel);
+        }
+
+        *self
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn load_object_instance(
     root: &mut gltf_json::Root,
@@ -745,17 +760,22 @@ fn load_object_instance(
     object_list: &ObjectList,
     object_list_name: &str,
     object_instance_index: usize,
-    object_instance: &roselib::files::ifo::ObjectData,
+    object_instance: &rose_file_lib::files::ifo::ObjectData,
 ) {
     let mut children = Vec::new();
     let object_id = object_instance.object_id as usize;
-    let object = &object_list.zsc.objects[object_id];
+    let Some(object) = &object_list.zsc.models[object_id] else {
+        return;
+    };
     let object_average_scale =
         (object_instance.scale.x + object_instance.scale.y + object_instance.scale.z) / 3.0;
 
     // Spawn a node for each object part
     for (part_index, part) in object.parts.iter().enumerate() {
-        let mesh_data = object_list.meshes.get(&part.mesh_id).expect("Missing mesh");
+        let mesh_data = object_list
+            .meshes
+            .get(&part.mesh_path)
+            .expect("Missing mesh");
         let mesh_index = root.meshes.len() as u32;
         root.meshes.push(mesh::Mesh {
             name: Some(format!(
@@ -769,7 +789,10 @@ fn load_object_instance(
                 extensions: Default::default(),
                 extras: Default::default(),
                 indices: Some(mesh_data.indices),
-                material: object_list.materials.get(&part.material_id).copied(),
+                material: part
+                    .material
+                    .as_ref()
+                    .and_then(|material| object_list.materials.get(material).copied()),
                 mode: Checked::Valid(mesh::Mode::Triangles),
                 targets: None,
             }],
@@ -824,8 +847,8 @@ fn load_object_instance(
             weights: None,
         });
 
-        if !part.animation_path.as_os_str().is_empty() {
-            let animation_path = assets_path.join(&part.animation_path);
+        if let Some(animation_path) = part.animation_path.as_ref() {
+            let animation_path = assets_path.join(animation_path);
             if let Ok(zmo) = ZMO::from_path(&animation_path) {
                 let name = format!(
                     "{}_{}_{}_{}_{}_anim",
@@ -835,21 +858,6 @@ fn load_object_instance(
                     object_instance_index,
                     part_index
                 );
-
-                impl GetAnimationChannelNode for Index<scene::Node> {
-                    fn get(
-                        &self,
-                        _root: &mut gltf_json::Root,
-                        channel: u32,
-                    ) -> Index<gltf_json::Node> {
-                        if channel != 0 {
-                            panic!("Unexpected animation channel {}", channel);
-                        }
-
-                        *self
-                    }
-                }
-
                 load_animation(root, binary_data, &zmo, &name, node_index);
             } else {
                 println!("Failed to load {}", animation_path.to_string_lossy());
