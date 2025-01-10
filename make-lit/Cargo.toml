@@ -2,9 +2,10 @@
 name = "make-lit"
 version = { workspace = true }
 edition = { workspace = true }
+authors = { workspace = true }
 
 [dependencies]
 clap = { workspace = true }
 glam = { workspace = true }
 image = { workspace = true }
-roselib = { workspace = true }
+rose-file-lib = { path = "../rose-file-lib" }

@@ -1,5 +1,6 @@
 use std::{collections::HashMap, io::Cursor, path::Path};
 
+use anyhow::Context;
 use bytes::{BufMut, BytesMut};
 use gltf_json::{
     buffer, material, texture,
@@ -7,8 +8,8 @@ use gltf_json::{
     Index,
 };
 use image::{DynamicImage, ImageBuffer, Rgba};
-use roselib::{
-    files::{ZMS, ZSC},
+use rose_file_lib::{
+    files::{zsc, ZMS, ZSC},
     io::RoseFile,
 };
 
@@ -16,16 +17,16 @@ use crate::{mesh::load_mesh_data, mesh_builder::MeshData, pad_align};
 
 pub struct ObjectList {
     pub zsc: ZSC,
-    pub materials: HashMap<u16, Index<material::Material>>,
-    pub meshes: HashMap<u16, MeshData>,
+    pub materials: HashMap<zsc::ModelMaterial, Index<material::Material>>,
+    pub meshes: HashMap<String, MeshData>,
     pub sampler: Index<texture::Sampler>,
 }
 
 impl ObjectList {
     pub fn new(zsc: ZSC, sampler: Index<texture::Sampler>) -> Self {
         Self {
-            materials: HashMap::with_capacity(zsc.materials.len()),
-            meshes: HashMap::with_capacity(zsc.meshes.len()),
+            materials: HashMap::new(),
+            meshes: HashMap::new(),
             zsc,
             sampler,
         }
@@ -38,42 +39,50 @@ impl ObjectList {
         root: &mut gltf_json::Root,
         binary_data: &mut BytesMut,
         assets_path: &Path,
-    ) {
-        let object = self.zsc.objects.get(object_id).expect("Invalid object id");
-        for part in object.parts.iter() {
-            if let Some(material_data) = self.load_material(
-                name_prefix,
-                part.material_id,
-                root,
-                binary_data,
-                assets_path,
-            ) {
-                self.materials.insert(part.material_id, material_data);
+    ) -> anyhow::Result<()> {
+        let object = self
+            .zsc
+            .models
+            .get(object_id)
+            .with_context(|| format!("Invalid object id: {}", object_id))?;
+
+        for part in object
+            .as_ref()
+            .map_or([].iter(), |object| object.parts.iter())
+        {
+            if let Some(material) = part.material.as_ref() {
+                if let Some(material_data) =
+                    self.load_material(name_prefix, material, root, binary_data, assets_path)
+                {
+                    self.materials.insert(material.clone(), material_data);
+                }
             }
 
             if let Some(mesh_data) =
-                self.load_mesh(name_prefix, part.mesh_id, root, binary_data, assets_path)
+                self.load_mesh(name_prefix, &part.mesh_path, root, binary_data, assets_path)
             {
-                self.meshes.insert(part.mesh_id, mesh_data);
+                self.meshes.insert(part.mesh_path.clone(), mesh_data);
             }
         }
+
+        Ok(())
     }
 
     pub fn load_mesh(
         &self,
         name_prefix: &str,
-        mesh_id: u16,
+        mesh_path: &str,
         root: &mut gltf_json::Root,
         binary_data: &mut BytesMut,
         assets_path: &Path,
     ) -> Option<MeshData> {
-        if self.meshes.contains_key(&mesh_id) {
+        if self.meshes.contains_key(mesh_path) {
             // Already loaded
             return None;
         }
 
-        let zms = ZMS::from_path(&assets_path.join(&self.zsc.meshes[mesh_id as usize]))
-            .expect("Failed to load ZMS");
+        let zms = ZMS::from_path(&assets_path.join(mesh_path)).expect("Failed to load ZMS");
+        let mesh_id = self.meshes.len();
         Some(load_mesh_data(
             root,
             binary_data,
@@ -86,25 +95,21 @@ impl ObjectList {
     pub fn load_material(
         &self,
         name_prefix: &str,
-        material_id: u16,
+        material: &zsc::ModelMaterial,
         root: &mut gltf_json::Root,
         binary_data: &mut BytesMut,
         assets_path: &Path,
     ) -> Option<Index<material::Material>> {
-        if self.materials.contains_key(&material_id) {
+        if self.materials.contains_key(material) {
             // Already loaded
             return None;
         }
 
-        let material = self.zsc.materials.get(material_id as usize).unwrap();
+        let material_id = self.materials.len();
         let img = match image::open(assets_path.join(&material.path)) {
             Ok(img) => img,
             Err(error) => {
-                println!(
-                    "Failed to read {} with error {}",
-                    material.path.to_string_lossy(),
-                    error
-                );
+                println!("Failed to read {} with error {}", material.path, error);
                 DynamicImage::ImageRgba8(ImageBuffer::from_pixel(
                     4,
                     4,
@@ -113,11 +118,8 @@ impl ObjectList {
             }
         };
         let mut png_buffer: Vec<u8> = Vec::new();
-        img.write_to(
-            &mut Cursor::new(&mut png_buffer),
-            image::ImageOutputFormat::Png,
-        )
-        .expect("Failed to write PNG");
+        img.write_to(&mut Cursor::new(&mut png_buffer), image::ImageFormat::Png)
+            .expect("Failed to write PNG");
 
         pad_align(binary_data);
         let texture_data_start = binary_data.len();
@@ -161,12 +163,10 @@ impl ObjectList {
         let material_index = Index::new(root.materials.len() as u32);
         root.materials.push(material::Material {
             name: Some(format!("{}_material_{}", name_prefix, material_id)),
-            alpha_cutoff: if material.alpha_test_enabled {
-                Some(material::AlphaCutoff(material.alpha_ref as f32 / 256.0))
-            } else {
-                None
-            },
-            alpha_mode: Checked::Valid(if material.alpha_test_enabled {
+            alpha_cutoff: material
+                .alpha_test
+                .map(|alpha_ref| material::AlphaCutoff(alpha_ref as f32 / 256.0)),
+            alpha_mode: Checked::Valid(if material.alpha_test.is_some() {
                 material::AlphaMode::Mask
             } else if material.alpha_enabled {
                 material::AlphaMode::Blend

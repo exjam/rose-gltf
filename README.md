@@ -1,7 +1,11 @@
 # rose-gltf
 
-## Generating lightmaps using Blender
+## Converting ROSE models to GLTF
+List a combination of .ZMD .ZMO and .ZMS to convert a ROSE model into a gltf:
 
+`rose-gtlf --out=output.glb 3DDATA/AVATAR/MALE.ZMD 3DDATA/MOTION/AVATAR/EMPTY_RUN_M1.ZMO 3DDATA/AVATAR/BODY/BODY1_00100.ZMS 3DDATA/AVATAR/BODY/BODY1_00110.ZMS 3DDATA/AVATAR/ARMS/ARM1_00100.ZMS 3DDATA/AVATAR/FOOT/FOOT1_00100.ZMS`
+
+## Generating lightmaps using Blender
 ### Setup
 Install The Lightmapper:
   - https://github.com/Naxela/The_Lightmapper/wiki/0.-Installing-The-Lightmapper
@@ -16,11 +20,11 @@ Latest releases for ODIN can be found here:
 #### Convert a zone to GLTF
 To convert a whole zone:
 
-`rose-gltf --out=zant.glb "F:\\rose\\narose\\svn-rose-online\\assets\\3ddata\\maps\\junon\\jdt01\\jdt01.zon"`
+`rose-gltf --out=zant.glb "3ddata/maps/junon/jdt01/jdt01.zon"`
 
 You can also convert only a single block if you want to iterate on light settings faster:
 
-`rose-gltf --out=zant_32_32.glb --filter-block-x=32 --filter-block-y=32 "F:\\rose\\narose\\svn-rose-online\\assets\\3ddata\\maps\\junon\\jdt01\\jdt01.zon"`
+`rose-gltf --out=zant_32_32.glb --filter-block-x=32 --filter-block-y=32 "3ddata/maps/junon/jdt01/jdt01.zon"`
 
 Where:
 - `--out` is the path to the output gltf file

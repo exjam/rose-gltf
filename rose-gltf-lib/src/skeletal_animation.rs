@@ -1,6 +1,6 @@
 use bytes::{BufMut, BytesMut};
 use glam::{Mat4, Quat, Vec3};
-use roselib::files::{ZMD, ZMO};
+use rose_file_lib::files::{zmd::Bone, ZMD, ZMO};
 
 use gltf_json::{
     accessor, buffer,
@@ -25,6 +25,37 @@ fn transform_children(zmd: &ZMD, bone_transforms: &mut Vec<Mat4>, bone_index: us
     }
 }
 
+fn bone_to_node(bone: &Bone) -> (Node, glam::Mat4) {
+    let translation = Vec3::new(bone.position.x, bone.position.z, -bone.position.y) / 100.0;
+    let rotation = Quat::from_xyzw(
+        bone.rotation.x,
+        bone.rotation.z,
+        -bone.rotation.y,
+        bone.rotation.w,
+    )
+    .normalize();
+
+    let node = Node {
+        name: Some(bone.name.clone()),
+        camera: None,
+        children: None,
+        extensions: Default::default(),
+        extras: Default::default(),
+        matrix: None,
+        mesh: None,
+        rotation: Some(UnitQuaternion([
+            rotation.x, rotation.y, rotation.z, rotation.w,
+        ])),
+        scale: None,
+        translation: Some([translation.x, translation.y, translation.z]),
+        skin: None,
+        weights: None,
+    };
+    let bind_pose = glam::Mat4::from_rotation_translation(rotation, translation);
+
+    (node, bind_pose)
+}
+
 pub fn load_skeleton(
     root: &mut gltf_json::Root,
     binary_data: &mut BytesMut,
@@ -33,7 +64,7 @@ pub fn load_skeleton(
 ) -> Index<Skin> {
     let bone_node_index_start = root.nodes.len();
     let mut joints = Vec::new();
-    let mut bind_pose = Vec::new();
+    let mut bind_poses = Vec::new();
 
     pad_align(binary_data);
 
@@ -43,56 +74,45 @@ pub fn load_skeleton(
         .push(Index::new(root.nodes.len() as u32));
 
     // Create nodes for each bone
-    for i in 0..zmd.bones.len() {
-        let bone = &zmd.bones[i];
-        let translation = Vec3::new(bone.position.x, bone.position.z, -bone.position.y) / 100.0;
-        let rotation = Quat::from_xyzw(
-            bone.rotation.x,
-            bone.rotation.z,
-            -bone.rotation.y,
-            bone.rotation.w,
-        )
-        .normalize();
+    for (bone_index, bone) in zmd.bones.iter().enumerate() {
+        let (node, bind_pose) = bone_to_node(bone);
 
-        root.nodes.push(Node {
-            name: Some(format!("{}_Bone_{}", name, i)),
-            camera: None,
-            children: None,
-            extensions: Default::default(),
-            extras: Default::default(),
-            matrix: None,
-            mesh: None,
-            rotation: Some(UnitQuaternion([
-                rotation.x, rotation.y, rotation.z, rotation.w,
-            ])),
-            scale: None,
-            translation: Some([translation.x, translation.y, translation.z]),
-            skin: None,
-            weights: None,
-        });
+        root.nodes.push(node);
+        joints.push(Index::new(bone_node_index_start as u32 + bone_index as u32));
+        bind_poses.push(bind_pose);
+    }
 
-        joints.push(Index::new(bone_node_index_start as u32 + i as u32));
-        bind_pose.push(glam::Mat4::from_rotation_translation(rotation, translation));
+    // Create nodes for each dummy bone
+    for (dummy_bone_index, dummy_bone) in zmd.dummy_bones.iter().enumerate() {
+        let (mut node, _bind_pose) = bone_to_node(dummy_bone);
+        if !dummy_bone.name.is_empty() {
+            node.name = Some(format!("dummy_{}_{}", dummy_bone_index, &dummy_bone.name));
+        } else {
+            node.name = Some(format!("dummy_{}", dummy_bone_index));
+        }
+
+        root.nodes.push(node);
     }
 
     // Assign parents
-    for i in 0..zmd.bones.len() {
-        let parent_bone_index = zmd.bones[i].parent as usize;
-        if parent_bone_index == i {
+    for (bone_index, bone) in zmd.bones.iter().chain(&zmd.dummy_bones).enumerate() {
+        if bone_index == bone.parent as usize {
             continue;
         }
 
-        let parent = &mut root.nodes[bone_node_index_start + parent_bone_index];
-        if let Some(children) = parent.children.as_mut() {
-            children.push(Index::new(bone_node_index_start as u32 + i as u32));
-        } else {
-            parent.children = Some(vec![Index::new(bone_node_index_start as u32 + i as u32)]);
-        }
+        let parent_node_index = bone_node_index_start + bone.parent as usize;
+        let parent_node = &mut root.nodes[parent_node_index];
+
+        let node_index = bone_node_index_start + bone_index;
+        parent_node
+            .children
+            .get_or_insert_with(Vec::new)
+            .push(Index::new(node_index as u32));
     }
 
     // Calculate inverse bind pose
-    transform_children(zmd, &mut bind_pose, 0);
-    let inverse_bind_pose: Vec<Mat4> = bind_pose.iter().map(|x| x.inverse()).collect();
+    transform_children(zmd, &mut bind_poses, 0);
+    let inverse_bind_pose: Vec<Mat4> = bind_poses.iter().map(|x| x.inverse()).collect();
 
     let skeleton_data_start = binary_data.len();
     for mtx in inverse_bind_pose.iter() {

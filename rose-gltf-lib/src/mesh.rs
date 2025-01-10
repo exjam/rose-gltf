@@ -1,7 +1,7 @@
 use bytes::BytesMut;
 use glam::{Vec2, Vec3, Vec4};
 use gltf_json::{mesh, validation::Checked};
-use roselib::files::ZMS;
+use rose_file_lib::files::ZMS;
 
 use crate::mesh_builder::{MeshBuilder, MeshData};
 

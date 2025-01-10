@@ -8,7 +8,7 @@ use std::{
 
 use clap::Parser;
 use image::GenericImage;
-use roselib::{
+use rose_file_lib::{
     files::{
         lit::{LightmapObject, LightmapPart},
         LIT,
@@ -87,9 +87,10 @@ struct LightmapImage {
 }
 
 fn parse_name(args: &Args, path: PathBuf) -> Option<LightmapImage> {
-    if !path.extension().map_or(false, |extension| {
-        extension.eq_ignore_ascii_case(&args.extension)
-    }) {
+    if !path
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(&args.extension))
+    {
         return None;
     }
 
@@ -287,7 +288,7 @@ fn main() {
                 OsStr::new("-o"),      // Output directory
                 path.parent().unwrap().as_os_str(),
                 OsStr::new("--"),
-                &path.as_os_str(),
+                path.as_os_str(),
             ])
             .output()
             .expect("Failed to run texconv.exe");
