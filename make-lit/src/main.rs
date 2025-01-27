@@ -139,7 +139,7 @@ fn collect_images(args: &Args, dir: &Path) -> Vec<LightmapImage> {
     };
 
     for entry in iter.flatten() {
-        if let Some(image) = parse_name(args, dir.join(entry.path())) {
+        if let Some(image) = parse_name(args, entry.path()) {
             if !args.quiet {
                 println!(
                     "Found image {} (block {}, {}, {:?}: {}, part: {})",
